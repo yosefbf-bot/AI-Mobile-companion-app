@@ -172,6 +172,13 @@ class PrivateAIRepository(
         return sessionId
     }
 
+    private var activeStreamJob: kotlinx.coroutines.Job? = null
+
+    fun stopStreaming() {
+        activeStreamJob?.cancel()
+        activeStreamJob = null
+    }
+
     suspend fun sendMessage(
         sessionId: String,
         prompt: String,
@@ -210,20 +217,63 @@ class PrivateAIRepository(
         }
 
         if (isDesktopConnected) {
-            scope.launch {
+            activeStreamJob?.cancel()
+            activeStreamJob = scope.launch {
                 try {
-                    val reply = nodeService.dispatchInferenceToDesktop(
+                    val replyId = UUID.randomUUID().toString()
+                    val modelUsed = if (attachment?.type == "IMAGE") {
+                        "Llama-3.2-Vision (Workstation Local)"
+                    } else {
+                        "Llama-3.3-70B-Instruct (Desktop Node)"
+                    }
+
+                    val initialPlaceholder = EncryptedChatMessage(
+                        id = replyId,
                         sessionId = sessionId,
-                        userPrompt = prompt,
-                        config = _nodeConfig.value,
+                        sender = "assistant",
+                        encryptedContent = EncryptionManager.encrypt("Thinking on workstation GPU..."),
+                        timestamp = System.currentTimeMillis(),
+                        status = "STREAMING",
+                        promptTokens = prompt.length / 4,
+                        completionTokens = 0,
+                        modelName = modelUsed
+                    )
+                    chatDao.insertMessage(initialPlaceholder)
+
+                    var lastEmittedText = ""
+                    nodeService.streamInferenceFromDesktop(
+                        prompt = prompt,
                         attachmentName = attachment?.name,
                         attachmentType = attachment?.type
+                    ).collect { partialText ->
+                        lastEmittedText = partialText
+                        val partialEncrypted = EncryptionManager.encrypt(partialText)
+                        chatDao.insertMessage(
+                            initialPlaceholder.copy(
+                                encryptedContent = partialEncrypted,
+                                completionTokens = partialText.length / 4,
+                                status = "STREAMING"
+                            )
+                        )
+                    }
+
+                    val finalEncrypted = EncryptionManager.encrypt(lastEmittedText)
+                    chatDao.insertMessage(
+                        initialPlaceholder.copy(
+                            encryptedContent = finalEncrypted,
+                            completionTokens = lastEmittedText.length / 4,
+                            status = "SYNCED_DESKTOP"
+                        )
                     )
-                    chatDao.insertMessage(reply)
                     _lastSyncTimestamp.value = System.currentTimeMillis()
                 } catch (e: Exception) {
-                    // Queue for next sync
-                    chatDao.updateMessageStatus(userMessage.id, "QUEUED_OFFLINE")
+                    if (e is kotlinx.coroutines.CancellationException) {
+                        // Stream stopped by user
+                    } else {
+                        chatDao.updateMessageStatus(userMessage.id, "QUEUED_OFFLINE")
+                    }
+                } finally {
+                    activeStreamJob = null
                 }
             }
         }
@@ -266,6 +316,49 @@ class PrivateAIRepository(
 
     suspend fun markAllNotificationsRead() {
         taskDao.markAllNotificationsRead()
+    }
+
+    suspend fun acknowledgeAlert(id: String) {
+        taskDao.acknowledgeNotification(id)
+    }
+
+    private val _secureClinicalMode = MutableStateFlow(false)
+    val secureClinicalMode: StateFlow<Boolean> = _secureClinicalMode.asStateFlow()
+
+    private val _modelProcessingMode = MutableStateFlow("Local") // "Local", "Smart Hybrid", "Cloud", "Local Only"
+    val modelProcessingMode: StateFlow<String> = _modelProcessingMode.asStateFlow()
+
+    fun setSecureClinicalMode(enabled: Boolean) {
+        _secureClinicalMode.value = enabled
+    }
+
+    fun setModelProcessingMode(mode: String) {
+        _modelProcessingMode.value = mode
+    }
+
+    suspend fun startAgent(name: String) {
+        val task = nodeService.startAgent(name, _nodeConfig.value)
+        taskDao.insertTask(task)
+    }
+
+    suspend fun runPlaybook(name: String) {
+        val task = nodeService.runPlaybook(name, _nodeConfig.value)
+        taskDao.insertTask(task)
+    }
+
+    suspend fun cancelTask(taskId: String) {
+        nodeService.cancelTask(taskId, _nodeConfig.value)
+        taskDao.updateTaskStatus(taskId, "FAILED")
+    }
+
+    suspend fun retryTask(taskId: String) {
+        nodeService.retryTask(taskId, _nodeConfig.value)
+        taskDao.updateTaskStatus(taskId, "RUNNING")
+    }
+
+    suspend fun submitApproval(taskId: String, approved: Boolean) {
+        nodeService.submitApproval(taskId, approved, _nodeConfig.value)
+        taskDao.updateTaskStatus(taskId, if (approved) "RUNNING" else "REJECTED")
     }
 
     private fun startAdaptiveSyncLoop() {
@@ -433,19 +526,29 @@ class PrivateAIRepository(
         // Seed Notifications
         val notif1 = DesktopNotification(
             id = "notif-1",
-            title = "Workstation GPU Batch Finished",
-            message = "Document OCR & Entity Extraction completed with 0 errors.",
-            timestamp = System.currentTimeMillis() - 3600_000,
+            title = "Critical Clinical Finding",
+            message = "Elevated fall risk & psychotropic titration detected for resident in Unit 3 requiring review.",
+            timestamp = System.currentTimeMillis() - 15 * 60_000,
             isRead = false,
-            type = "INFERENCE_COMPLETE"
+            isAcknowledged = false,
+            severity = "CRITICAL",
+            category = "CLINICAL",
+            requiresApproval = false,
+            assignedTo = "Director of Nursing",
+            relatedAction = "Review Medication Orders"
         )
         val notif2 = DesktopNotification(
             id = "notif-2",
-            title = "Secure Sync Complete",
-            message = "End-to-end encrypted sync finished with desktop host 192.168.1.155.",
-            timestamp = System.currentTimeMillis() - 1800_000,
-            isRead = true,
-            type = "SYNC_ALERT"
+            title = "Agent Requires Approval",
+            message = "Staffing Analysis Agent proposes automated shift-fill broadcast to float pool.",
+            timestamp = System.currentTimeMillis() - 42 * 60_000,
+            isRead = false,
+            isAcknowledged = false,
+            severity = "HIGH",
+            category = "AGENT_APPROVAL",
+            requiresApproval = true,
+            assignedTo = "Administrator",
+            relatedAction = "Approve Shift Broadcast"
         )
         taskDao.insertNotifications(listOf(notif1, notif2))
     }

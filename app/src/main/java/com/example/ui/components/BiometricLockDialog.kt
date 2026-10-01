@@ -91,8 +91,8 @@ fun BiometricLockOverlay(
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
-                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.google_private_ai_logo_1790825401600),
-                        contentDescription = "Private AI Desktop App Logo",
+                        painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.private_ai_phoenix_icon_1790853562714),
+                        contentDescription = "Private AI Phoenix Logo",
                         modifier = Modifier
                             .fillMaxSize()
                             .clip(CircleShape),

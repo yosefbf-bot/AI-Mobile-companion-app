@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/google_private_ai_logo_1790825401600"
+        android:drawable="@drawable/private_ai_phoenix_icon_1790853562714"
         android:gravity="center" />
 </layer-list>

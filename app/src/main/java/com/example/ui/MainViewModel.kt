@@ -164,6 +164,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.toggleSimulatedDesktopNode(enabled)
     }
 
+    val secureClinicalMode: StateFlow<Boolean> = repository.secureClinicalMode
+    val modelProcessingMode: StateFlow<String> = repository.modelProcessingMode
+
+    private val _isStreamingResponse = MutableStateFlow(false)
+    val isStreamingResponse: StateFlow<Boolean> = _isStreamingResponse.asStateFlow()
+
+    fun setSecureClinicalMode(enabled: Boolean) {
+        repository.setSecureClinicalMode(enabled)
+        _userFeedback.value = if (enabled) "Secure Clinical Mode activated (Screenshots blocked, PHI hidden)" else "Standard Clinical Mode"
+    }
+
+    fun setModelProcessingMode(mode: String) {
+        repository.setModelProcessingMode(mode)
+        _userFeedback.value = "AI Routing set to: $mode"
+    }
+
+    fun startAgent(name: String) {
+        viewModelScope.launch {
+            repository.startAgent(name)
+            _userFeedback.value = "Agent '$name' dispatched to desktop runtime."
+        }
+    }
+
+    fun runPlaybook(name: String) {
+        viewModelScope.launch {
+            repository.runPlaybook(name)
+            _userFeedback.value = "Playbook '$name' started on workstation."
+        }
+    }
+
+    fun cancelTask(taskId: String) {
+        viewModelScope.launch {
+            repository.cancelTask(taskId)
+            _userFeedback.value = "Task cancelled on desktop node."
+        }
+    }
+
+    fun retryTask(taskId: String) {
+        viewModelScope.launch {
+            repository.retryTask(taskId)
+            _userFeedback.value = "Task re-queued for execution."
+        }
+    }
+
+    fun submitApproval(taskId: String, approved: Boolean) {
+        viewModelScope.launch {
+            repository.submitApproval(taskId, approved)
+            _userFeedback.value = if (approved) "Action approved. Agent continuing execution." else "Action rejected."
+        }
+    }
+
+    fun acknowledgeAlert(alertId: String) {
+        viewModelScope.launch {
+            repository.acknowledgeAlert(alertId)
+            _userFeedback.value = "Alert acknowledged."
+        }
+    }
+
+    fun stopStreaming() {
+        repository.stopStreaming()
+        _isStreamingResponse.value = false
+        _userFeedback.value = "Response stream stopped."
+    }
+
     fun markNotificationRead(id: String) {
         viewModelScope.launch {
             repository.markNotificationRead(id)

@@ -1,6 +1,10 @@
 package com.example.ui.screens.chats
 
+import android.app.Activity
+import android.content.Intent
 import android.graphics.Bitmap
+import android.speech.RecognizerIntent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,13 +37,19 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +58,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -63,8 +75,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -86,9 +100,12 @@ fun ChatDetailScreen(
     messages: List<EncryptedChatMessage>,
     connectionStatus: ConnectionStatus,
     hostIp: String,
+    modelMode: String,
+    onModelModeChange: (String) -> Unit,
     decryptText: (String) -> String,
     decryptAttachmentBitmap: (String) -> Bitmap?,
     onSendMessage: (String, ChatAttachment?) -> Unit,
+    onStopStreaming: () -> Unit,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -97,11 +114,28 @@ fun ChatDetailScreen(
     }
 
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     var messageInput by remember { mutableStateOf("") }
     var currentAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
     var showAttachmentSheet by remember { mutableStateOf(false) }
+    var showModeDropdown by remember { mutableStateOf(false) }
+    var isStreaming by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
+
+    // Android Native Speech Recognizer Launcher
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenText: ArrayList<String>? =
+                result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val text = spokenText?.firstOrNull()
+            if (!text.isNullOrBlank()) {
+                messageInput = if (messageInput.isBlank()) text else "$messageInput $text"
+            }
+        }
+    }
 
     // 1. Camera Picture Launcher
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -121,7 +155,7 @@ fun ChatDetailScreen(
         }
     }
 
-    // 3. Document / File Picker Launcher
+    // 3. Document / PDF / Code Picker Launcher
     val documentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -177,6 +211,52 @@ fun ChatDetailScreen(
                     }
                 },
                 actions = {
+                    // Processing Mode Selector (Local, Smart Hybrid, Cloud, Local Only)
+                    Box {
+                        SuggestionChip(
+                            onClick = { showModeDropdown = true },
+                            label = { Text(modelMode, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
+                            icon = { Icon(Icons.Default.Tune, contentDescription = "Mode", modifier = Modifier.size(14.dp)) },
+                            colors = SuggestionChipDefaults.suggestionChipColors(
+                                containerColor = CyberTeal.copy(alpha = 0.15f),
+                                labelColor = CyberTeal
+                            ),
+                            border = SuggestionChipDefaults.suggestionChipBorder(
+                                enabled = true,
+                                borderColor = CyberTeal.copy(alpha = 0.3f)
+                            ),
+                            modifier = Modifier.height(28.dp).testTag("model_mode_chip")
+                        )
+
+                        DropdownMenu(
+                            expanded = showModeDropdown,
+                            onDismissRequest = { showModeDropdown = false }
+                        ) {
+                            listOf("Local", "Smart Hybrid", "Cloud", "Local Only").forEach { mode ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(mode, fontWeight = FontWeight.Bold)
+                                            val desc = when (mode) {
+                                                "Local" -> "Inference 100% on workstation GPU"
+                                                "Smart Hybrid" -> "Private AI routes between local & external"
+                                                "Cloud" -> "Workstation proxies to secure cloud runtime"
+                                                else -> "Strict airgapped local execution"
+                                            }
+                                            Text(desc, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    },
+                                    onClick = {
+                                        onModelModeChange(mode)
+                                        showModeDropdown = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
                     ConnectionStatusBadge(
                         status = connectionStatus,
                         hostIp = hostIp,
@@ -291,7 +371,7 @@ fun ChatDetailScreen(
                     }
                 }
 
-                // Input row with attachment button, text field, and send button
+                // Input row with attachment, microphone, text field, and send/stop button
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -306,6 +386,30 @@ fun ChatDetailScreen(
                             imageVector = Icons.Default.AttachFile,
                             contentDescription = "Add attachment or take photo",
                             tint = if (currentAttachment != null) CyberTeal else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Native Speech Input Button
+                    IconButton(
+                        onClick = {
+                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak prompt for Private AI...")
+                            }
+                            try {
+                                speechLauncher.launch(intent)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Voice input not available on this device", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("voice_input_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Voice to text",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
@@ -330,32 +434,53 @@ fun ChatDetailScreen(
 
                     val canSend = messageInput.isNotBlank() || currentAttachment != null
 
-                    IconButton(
-                        onClick = {
-                            if (canSend) {
-                                val prompt = messageInput.trim().ifBlank {
-                                    if (currentAttachment?.type == "IMAGE") "Analyze this image and describe key details"
-                                    else "Process this attachment and extract main insights"
+                    if (isStreaming) {
+                        // Stop Generation Button
+                        IconButton(
+                            onClick = {
+                                isStreaming = false
+                                onStopStreaming()
+                            },
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = StatusAmber,
+                                contentColor = MaterialTheme.colorScheme.surface
+                            ),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .testTag("chat_stop_button")
+                        ) {
+                            Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop generation")
+                        }
+                    } else {
+                        // Send Button
+                        IconButton(
+                            onClick = {
+                                if (canSend) {
+                                    val prompt = messageInput.trim().ifBlank {
+                                        if (currentAttachment?.type == "IMAGE") "Analyze this image and describe key details"
+                                        else "Process this attachment and extract main insights"
+                                    }
+                                    onSendMessage(prompt, currentAttachment)
+                                    messageInput = ""
+                                    currentAttachment = null
                                 }
-                                onSendMessage(prompt, currentAttachment)
-                                messageInput = ""
-                                currentAttachment = null
-                            }
-                        },
-                        enabled = canSend,
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .testTag("chat_send_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send prompt"
-                        )
+                            },
+                            enabled = canSend,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .testTag("chat_send_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Send prompt"
+                            )
+                        }
                     }
                 }
             }
@@ -397,24 +522,44 @@ fun ChatDetailScreen(
                             // Assistant Header
                             if (!isUser) {
                                 Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(bottom = 6.dp)
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Lock,
-                                        contentDescription = "Decrypted",
-                                        tint = CyberCyan,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = msg.modelName,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            color = CyberTeal
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "Decrypted",
+                                            tint = CyberCyan,
+                                            modifier = Modifier.size(12.dp)
                                         )
-                                    )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = msg.modelName,
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = CyberTeal
+                                            )
+                                        )
+                                    }
+
+                                    // Copy action
+                                    IconButton(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(decryptedText))
+                                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = "Copy message",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
                                 }
+                                Spacer(modifier = Modifier.height(4.dp))
                             }
 
                             // Attached media rendering
@@ -477,39 +622,67 @@ fun ChatDetailScreen(
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End,
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (msg.status == "QUEUED_OFFLINE") {
-                                    Icon(
-                                        imageVector = Icons.Default.Schedule,
-                                        contentDescription = "Queued Offline",
-                                        tint = StatusAmber,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Queued for Desktop Sync",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontSize = 10.sp,
-                                            color = StatusAmber
+                                if (!isUser) {
+                                    // Regenerate button
+                                    Row(
+                                        modifier = Modifier.clickable {
+                                            onSendMessage("Regenerate response: $decryptedText", null)
+                                        },
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Regenerate",
+                                            tint = CyberTeal,
+                                            modifier = Modifier.size(12.dp)
                                         )
-                                    )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "Regenerate",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = CyberTeal)
+                                        )
+                                    }
                                 } else {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = "Synced",
-                                        tint = CyberTeal,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (isUser) "Synced" else "${msg.promptTokens + msg.completionTokens} tokens",
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    Spacer(modifier = Modifier.width(1.dp))
+                                }
+
+                                if (msg.status == "QUEUED_OFFLINE") {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Schedule,
+                                            contentDescription = "Queued Offline",
+                                            tint = StatusAmber,
+                                            modifier = Modifier.size(12.dp)
                                         )
-                                    )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Queued for Desktop Sync",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 10.sp,
+                                                color = StatusAmber
+                                            )
+                                        )
+                                    }
+                                } else {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "Synced",
+                                            tint = CyberTeal,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = if (isUser) "Synced" else "${msg.promptTokens + msg.completionTokens} tokens",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -574,11 +747,11 @@ fun ChatDetailScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Action 3: Document / File
+                // Action 3: Document / PDF / Code
                 AttachmentOptionRow(
                     icon = Icons.Default.Description,
-                    title = "Attach Document or Code",
-                    subtitle = "Select PDF, text, JSON, or code file",
+                    title = "Attach Document, PDF or Code",
+                    subtitle = "Select PDF, text, JSON, or code file for desktop ingestion",
                     onClick = {
                         showAttachmentSheet = false
                         documentPickerLauncher.launch("*/*")

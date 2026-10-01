@@ -15,6 +15,9 @@ interface TaskDao {
     @Query("SELECT * FROM desktop_tasks ORDER BY startedAt DESC")
     fun getAllTasks(): Flow<List<DesktopTask>>
 
+    @Query("SELECT * FROM desktop_tasks WHERE id = :id")
+    fun getTaskById(id: String): Flow<DesktopTask?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTask(task: DesktopTask)
 
@@ -23,6 +26,9 @@ interface TaskDao {
 
     @Update
     suspend fun updateTask(task: DesktopTask)
+
+    @Query("UPDATE desktop_tasks SET status = :status WHERE id = :id")
+    suspend fun updateTaskStatus(id: String, status: String)
 
     @Query("DELETE FROM desktop_tasks WHERE id = :id")
     suspend fun deleteTask(id: String)
@@ -41,6 +47,9 @@ interface TaskDao {
 
     @Query("UPDATE desktop_notifications SET isRead = 1 WHERE id = :id")
     suspend fun markNotificationRead(id: String)
+
+    @Query("UPDATE desktop_notifications SET isAcknowledged = 1, isRead = 1 WHERE id = :id")
+    suspend fun acknowledgeNotification(id: String)
 
     @Query("UPDATE desktop_notifications SET isRead = 1")
     suspend fun markAllNotificationsRead()

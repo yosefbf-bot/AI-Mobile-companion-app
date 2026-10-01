@@ -22,16 +22,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddComment
+import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.FolderShared
+import androidx.compose.material.icons.filled.LocalHospital
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -48,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -65,6 +73,8 @@ import com.example.ui.components.ConnectionStatusBadge
 import com.example.ui.components.SyncBanner
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberTeal
+import com.example.ui.theme.StatusAmber
+import com.example.ui.theme.StatusRed
 
 @Composable
 fun DashboardScreen(
@@ -79,11 +89,17 @@ fun DashboardScreen(
     onNavigateChats: () -> Unit,
     onNavigateVault: () -> Unit,
     onNavigateTasks: () -> Unit,
+    onNavigateAlerts: () -> Unit,
     onNavigateSettings: () -> Unit,
     onLockClick: () -> Unit,
     onNotificationClick: (String) -> Unit,
+    onQuickAction: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val criticalAlertsCount = notifications.count { it.severity == "CRITICAL" && !it.isAcknowledged }
+    val itemsRequiringReviewCount = notifications.count { !it.isAcknowledged }
+    val activeTasksCount = tasks.count { it.status == "RUNNING" }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -91,42 +107,29 @@ fun DashboardScreen(
         contentPadding = PaddingValues(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Hero Banner with Security Sync Graphic
+        // Hero Header with Private AI Wordmark & Phoenix Logo
         item {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(180.dp)
                     .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_hero_security_sync_1790824675551),
-                    contentDescription = "Desktop LAN Secure Sync Banner",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-
-                // Dark gradient overlay
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
-                                    MaterialTheme.colorScheme.background
-                                )
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                MaterialTheme.colorScheme.background
                             )
                         )
-                )
-
+                    )
+            ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(16.dp),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
+                    // Top row: Connection status + Lock button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -138,47 +141,70 @@ fun DashboardScreen(
                             onClick = onNavigateSettings
                         )
 
-                        IconButton(
-                            onClick = onLockClick,
-                            modifier = Modifier
-                                .testTag("lock_vault_icon_button")
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
-                                .size(36.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = "Lock Secure Vault",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = onNavigateSettings,
+                                modifier = Modifier
+                                    .testTag("settings_icon_button")
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
+                                    .size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Settings",
+                                    tint = CyberTeal,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            IconButton(
+                                onClick = onLockClick,
+                                modifier = Modifier
+                                    .testTag("lock_vault_icon_button")
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
+                                    .size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Lock Secure Vault",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Brand Row with uploaded Phoenix Emblem & Title
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Image(
-                            painter = painterResource(id = R.drawable.google_private_ai_logo_1790825401600),
-                            contentDescription = "Desktop App Logo",
+                            painter = painterResource(id = R.drawable.private_ai_phoenix_icon_1790853562714),
+                            contentDescription = "Private AI Phoenix Logo",
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .border(1.5.dp, CyberTeal.copy(alpha = 0.5f), CircleShape),
+                                .size(54.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.5.dp, CyberTeal.copy(alpha = 0.6f), RoundedCornerShape(12.dp)),
                             contentScale = ContentScale.Crop
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
                         Column {
                             Text(
-                                text = "Private AI Companion",
-                                style = MaterialTheme.typography.headlineSmall.copy(
-                                    fontWeight = FontWeight.Bold,
+                                text = "PRIVATE AI",
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.2.sp,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                             )
                             Text(
-                                text = "Workstation Node • Zero Cloud Telemetry",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = CyberCyan,
-                                    fontWeight = FontWeight.Medium
+                                text = "Windows Companion Gateway • Remote Control",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = CyberTeal,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             )
                         }
@@ -187,7 +213,7 @@ fun DashboardScreen(
             }
         }
 
-        // Sync & Battery Banner
+        // Sync Status Bar
         item {
             Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                 SyncBanner(
@@ -199,148 +225,197 @@ fun DashboardScreen(
             }
         }
 
-        // Quick Actions Grid
+        // Failure Handling Banner (Stage 7 Requirement)
+        if (connectionStatus == ConnectionStatus.DISCONNECTED) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .testTag("pc_unavailable_banner"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = StatusRed.copy(alpha = 0.12f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, contentDescription = "Disconnected", tint = StatusRed)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Private AI PC unavailable",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = StatusRed)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Possible causes:\n" +
+                                    "• Not connected to work Wi-Fi\n" +
+                                    "• Work VPN not connected\n" +
+                                    "• PC turned off or Private AI closed\n" +
+                                    "• Companion Gateway disabled or Windows Firewall blocking",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 16.sp)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onSyncClick,
+                                colors = ButtonDefaults.buttonColors(containerColor = StatusRed),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Retry", fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = onNavigateSettings,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text("Connection Diagnostics", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Executive / Admin Summary Triage Cards
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text(
-                    text = "Quick Actions",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface
+                    text = "Executive Overview",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(10.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    QuickActionCard(
-                        title = "New Chat",
-                        icon = Icons.Default.AddComment,
-                        description = "E2EE Prompt",
-                        onClick = onNavigateChats,
-                        modifier = Modifier.weight(1f),
-                        tag = "quick_action_chat"
+                    // Critical Alerts card
+                    ExecutiveStatCard(
+                        title = "Critical Alerts",
+                        value = "$criticalAlertsCount",
+                        subtext = if (criticalAlertsCount > 0) "Requires urgent review" else "All clear",
+                        indicatorColor = if (criticalAlertsCount > 0) StatusRed else CyberTeal,
+                        icon = Icons.Default.Warning,
+                        onClick = onNavigateAlerts,
+                        modifier = Modifier.weight(1f).testTag("stat_critical_alerts")
                     )
-                    QuickActionCard(
-                        title = "Doc Vault",
-                        icon = Icons.Default.FolderShared,
-                        description = "Offline Storage",
-                        onClick = onNavigateVault,
-                        modifier = Modifier.weight(1f),
-                        tag = "quick_action_vault"
+
+                    // Items Requiring Review card
+                    ExecutiveStatCard(
+                        title = "Review Items",
+                        value = "$itemsRequiringReviewCount",
+                        subtext = "Unacknowledged",
+                        indicatorColor = if (itemsRequiringReviewCount > 0) StatusAmber else CyberTeal,
+                        icon = Icons.Default.LocalHospital,
+                        onClick = onNavigateAlerts,
+                        modifier = Modifier.weight(1f).testTag("stat_review_items")
                     )
-                    QuickActionCard(
-                        title = "Tasks",
-                        icon = Icons.Default.PlayCircle,
-                        description = "${tasks.count { it.status == "RUNNING" }} Active",
+
+                    // Active Tasks card
+                    ExecutiveStatCard(
+                        title = "Active Tasks",
+                        value = "$activeTasksCount",
+                        subtext = "Running on PC",
+                        indicatorColor = CyberCyan,
+                        icon = Icons.Default.SmartToy,
                         onClick = onNavigateTasks,
-                        modifier = Modifier.weight(1f),
-                        tag = "quick_action_tasks"
+                        modifier = Modifier.weight(1f).testTag("stat_active_tasks")
                     )
                 }
             }
         }
 
-        // Workstation Node Telemetry (Desktop Mirror)
+        // Quick Actions (Matching ChatGPT Brief Exactly)
         item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .testTag("workstation_telemetry_card"),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                Text(
+                    text = "Quick Actions",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onBackground
                 )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Computer,
-                                contentDescription = "Desktop Node",
-                                tint = CyberTeal,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = nodeStats.serverName,
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                            )
-                        }
-
-                        Text(
-                            text = "LAN: ${nodeStats.localIp}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        QuickActionButton(
+                            title = "Ask Private AI",
+                            subtitle = "Local & Hybrid Chat",
+                            icon = Icons.Default.AddComment,
+                            onClick = onNavigateChats,
+                            modifier = Modifier.weight(1f).testTag("quick_action_ask")
+                        )
+                        QuickActionButton(
+                            title = "Morning Briefing",
+                            subtitle = "Administrator Synthesis",
+                            icon = Icons.Default.Assignment,
+                            onClick = { onQuickAction("Morning Administrator Brief") },
+                            modifier = Modifier.weight(1f).testTag("quick_action_morning_brief")
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Memory,
-                                contentDescription = "Model",
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = nodeStats.loadedModel,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        QuickActionButton(
+                            title = "Run Surveillance",
+                            subtitle = "Clinical Risk & Infection",
+                            icon = Icons.Default.LocalHospital,
+                            onClick = { onQuickAction("Daily Clinical Surveillance") },
+                            modifier = Modifier.weight(1f).testTag("quick_action_surveillance")
+                        )
+                        QuickActionButton(
+                            title = "Antipsychotic Review",
+                            subtitle = "GDR Compliance Playbook",
+                            icon = Icons.Default.Psychology,
+                            onClick = { onQuickAction("Antipsychotic Review") },
+                            modifier = Modifier.weight(1f).testTag("quick_action_antipsychotic")
+                        )
                     }
-
-                    Spacer(modifier = Modifier.height(14.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        MetricBox(
-                            label = "GPU Load",
-                            value = "${nodeStats.gpuUsagePercent}%",
-                            icon = Icons.Default.Speed,
-                            modifier = Modifier.weight(1f)
+                        QuickActionButton(
+                            title = "Today's Tasks",
+                            subtitle = "Active Agent Queue",
+                            icon = Icons.Default.SmartToy,
+                            onClick = onNavigateTasks,
+                            modifier = Modifier.weight(1f).testTag("quick_action_tasks")
                         )
-                        MetricBox(
-                            label = "VRAM Used",
-                            value = "${nodeStats.vramUsedGb} / ${nodeStats.vramTotalGb.toInt()}GB",
-                            icon = Icons.Default.Memory,
-                            modifier = Modifier.weight(1f)
+                        QuickActionButton(
+                            title = "Start Agent",
+                            subtitle = "Remote Automation",
+                            icon = Icons.Default.PlayArrow,
+                            onClick = onNavigateTasks,
+                            modifier = Modifier.weight(1f).testTag("quick_action_start_agent")
                         )
-                        MetricBox(
-                            label = "Uptime",
-                            value = nodeStats.serverUptime,
-                            icon = Icons.Default.Security,
-                            modifier = Modifier.weight(1f)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        QuickActionButton(
+                            title = "Upload Document",
+                            subtitle = "Send PDF / Files to PC",
+                            icon = Icons.Default.UploadFile,
+                            onClick = onNavigateVault,
+                            modifier = Modifier.weight(1f).testTag("quick_action_upload")
                         )
                     }
                 }
             }
         }
 
-        // Active Tasks Preview
+        // Recent Activity
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Row(
@@ -349,118 +424,81 @@ fun DashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Active Desktop Jobs",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                        text = "Recent Activity",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = "View All (${tasks.size})",
-                        style = MaterialTheme.typography.labelMedium.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.clickable { onNavigateTasks() }
+                        text = "View All Tasks",
+                        style = MaterialTheme.typography.labelSmall.copy(color = CyberTeal, fontWeight = FontWeight.Bold),
+                        modifier = Modifier.clickable(onClick = onNavigateTasks)
                     )
                 }
+                Spacer(modifier = Modifier.height(10.dp))
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (tasks.isEmpty()) {
-                    Text(
-                        text = "No active tasks running on desktop.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    tasks.take(2).forEach { task ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface
-                            )
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = task.title,
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text(
-                                        text = task.status,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (task.status == "RUNNING") CyberTeal else MaterialTheme.colorScheme.primary
-                                        )
-                                    )
-                                }
-                                if (task.status == "RUNNING") {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    LinearProgressIndicator(
-                                        progress = { task.progress },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(6.dp)
-                                            .clip(RoundedCornerShape(3.dp)),
-                                        color = CyberTeal
-                                    )
-                                }
-                            }
-                        }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        RecentActivityItem(
+                            title = "Clinical Surveillance",
+                            status = "Complete",
+                            statusColor = CyberTeal,
+                            time = "Today, 08:30"
+                        )
+                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        RecentActivityItem(
+                            title = "Weekly Analysis",
+                            status = "Running",
+                            statusColor = CyberCyan,
+                            time = "In Progress (68%)"
+                        )
+                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                        RecentActivityItem(
+                            title = "Morning Report",
+                            status = "Complete",
+                            statusColor = CyberTeal,
+                            time = "Today, 07:15"
+                        )
                     }
                 }
             }
         }
 
-        // Recent Notifications
+        // Workstation Node Hardware Telemetry
         item {
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text(
-                    text = "Desktop Notifications & Alerts",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                    text = "Windows Workstation Telemetry",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-            }
-        }
 
-        items(notifications.take(3)) { notif ->
-            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onNotificationClick(notif.id) },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (notif.isRead) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                 ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = if (notif.isRead) Icons.Default.CheckCircle else Icons.Default.Notifications,
-                            contentDescription = "Notification",
-                            tint = if (notif.isRead) MaterialTheme.colorScheme.onSurfaceVariant else CyberTeal,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = notif.title,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                            )
-                            Text(
-                                text = notif.message,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text = "Host Node:", style = MaterialTheme.typography.labelSmall)
+                            Text(text = nodeStats.serverName, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text = "Primary Model:", style = MaterialTheme.typography.labelSmall)
+                            Text(text = nodeStats.loadedModel, style = MaterialTheme.typography.labelSmall.copy(color = CyberTeal, fontWeight = FontWeight.Bold))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text = "GPU VRAM Allocated:", style = MaterialTheme.typography.labelSmall)
+                            Text(text = "${nodeStats.vramUsedGb} GB / ${nodeStats.vramTotalGb} GB (RTX 4090)", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                        }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(text = "Transport Path:", style = MaterialTheme.typography.labelSmall)
+                            Text(text = "LAN / VPN Direct Gateway", style = MaterialTheme.typography.labelSmall.copy(color = CyberCyan))
                         }
                     }
                 }
@@ -470,81 +508,161 @@ fun DashboardScreen(
 }
 
 @Composable
-fun QuickActionCard(
+fun ExecutiveStatCard(
     title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    description: String,
+    value: String,
+    subtext: String,
+    indicatorColor: Color,
+    icon: ImageVector,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    tag: String
+    modifier: Modifier = Modifier
 ) {
     Card(
         modifier = modifier
-            .testTag(tag)
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, indicatorColor.copy(alpha = 0.4f))
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.Start
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = title,
-                tint = CyberTeal,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Icon(
+                    imageVector = icon,
+                    contentDescription = title,
+                    tint = indicatorColor,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                text = value,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = indicatorColor
+                )
             )
+
             Text(
-                text = description,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                text = subtext,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
 @Composable
-fun MetricBox(
-    label: String,
-    value: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+fun QuickActionButton(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Box(
+    Card(
         modifier = modifier
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-            .padding(8.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
     ) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(CyberTeal.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = icon,
-                    contentDescription = label,
-                    tint = CyberCyan,
-                    modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    contentDescription = title,
+                    tint = CyberTeal,
+                    modifier = Modifier.size(20.dp)
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
+
+            Spacer(modifier = Modifier.width(10.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RecentActivityItem(
+    title: String,
+    status: String,
+    statusColor: Color,
+    time: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(statusColor)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = value,
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = status,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = statusColor)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "• $time",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             )
         }
     }

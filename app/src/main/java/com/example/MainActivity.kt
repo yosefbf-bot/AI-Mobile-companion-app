@@ -1,19 +1,19 @@
 package com.example
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.FolderShared
-import androidx.compose.material.icons.filled.ListAlt
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -37,6 +37,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.MainViewModel
 import com.example.ui.components.BiometricLockOverlay
+import com.example.ui.screens.alerts.AlertsScreen
 import com.example.ui.screens.chats.ChatDetailScreen
 import com.example.ui.screens.chats.ChatListScreen
 import com.example.ui.screens.dashboard.DashboardScreen
@@ -45,13 +46,15 @@ import com.example.ui.screens.tasks.TasksScreen
 import com.example.ui.screens.vault.DocumentVaultScreen
 import com.example.ui.theme.CyberTeal
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.StatusRed
 
 enum class ScreenTab(val title: String, val testTag: String) {
-    DASHBOARD("Dashboard", "nav_dashboard"),
-    CHATS("Chats", "nav_chats"),
-    VAULT("Vault", "nav_vault"),
+    HOME("Home", "nav_home"),
+    CHAT("Chat", "nav_chat"),
     TASKS("Tasks", "nav_tasks"),
-    SETTINGS("Node", "nav_settings")
+    ALERTS("Alerts", "nav_alerts"),
+    FILES("Files", "nav_files"),
+    SETTINGS("Settings", "nav_settings")
 }
 
 class MainActivity : FragmentActivity() {
@@ -78,9 +81,23 @@ class MainActivity : FragmentActivity() {
                 val tasks by viewModel.tasks.collectAsStateWithLifecycle()
                 val notifications by viewModel.notifications.collectAsStateWithLifecycle()
                 val feedbackMessage by viewModel.userFeedback.collectAsStateWithLifecycle()
+                val secureClinicalMode by viewModel.secureClinicalMode.collectAsStateWithLifecycle()
+                val modelMode by viewModel.modelProcessingMode.collectAsStateWithLifecycle()
 
                 val snackbarHostState = remember { SnackbarHostState() }
-                var currentTab by remember { mutableStateOf(ScreenTab.DASHBOARD) }
+                var currentTab by remember { mutableStateOf(ScreenTab.HOME) }
+
+                // Secure Clinical Mode enforcement (FLAG_SECURE blocks screenshots and recents preview)
+                LaunchedEffect(secureClinicalMode) {
+                    if (secureClinicalMode) {
+                        window.setFlags(
+                            WindowManager.LayoutParams.FLAG_SECURE,
+                            WindowManager.LayoutParams.FLAG_SECURE
+                        )
+                    } else {
+                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                }
 
                 LaunchedEffect(feedbackMessage) {
                     feedbackMessage?.let {
@@ -91,19 +108,22 @@ class MainActivity : FragmentActivity() {
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (activeSessionId != null) {
-                        // Detailed Chat Screen
+                        // Detailed Chat Screen with Voice, Streaming, Attachments, Model Indicator
                         ChatDetailScreen(
                             session = activeSession,
                             messages = activeSessionMessages,
                             connectionStatus = connectionStatus,
                             hostIp = "${nodeConfig.hostIp}:${nodeConfig.port}",
+                            modelMode = modelMode,
+                            onModelModeChange = { viewModel.setModelProcessingMode(it) },
                             decryptText = { viewModel.decrypt(it) },
                             decryptAttachmentBitmap = { viewModel.decryptAttachmentBitmap(it) },
                             onSendMessage = { prompt, attachment -> viewModel.sendMessage(prompt, attachment) },
+                            onStopStreaming = { viewModel.stopStreaming() },
                             onBackClick = { viewModel.selectSession(null) }
                         )
                     } else {
-                        // Main Scaffold with Bottom Navigation
+                        // Main Scaffold with 5 Core Navigation Sections (Home, Chat, Tasks, Alerts, Files)
                         Scaffold(
                             modifier = Modifier.fillMaxSize(),
                             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -112,65 +132,54 @@ class MainActivity : FragmentActivity() {
                                     containerColor = MaterialTheme.colorScheme.surface,
                                     tonalElevation = androidx.compose.ui.unit.Dp(8f)
                                 ) {
+                                    // 1. Home (Executive Dashboard)
                                     NavigationBarItem(
-                                        selected = currentTab == ScreenTab.DASHBOARD,
-                                        onClick = { currentTab = ScreenTab.DASHBOARD },
+                                        selected = currentTab == ScreenTab.HOME,
+                                        onClick = { currentTab = ScreenTab.HOME },
                                         icon = {
-                                            Icon(Icons.Default.Dashboard, contentDescription = "Dashboard")
+                                            Icon(Icons.Default.Dashboard, contentDescription = "Home")
                                         },
-                                        label = { Text("Dashboard") },
+                                        label = { Text("Home") },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = CyberTeal,
                                             indicatorColor = MaterialTheme.colorScheme.surfaceVariant
                                         ),
-                                        modifier = Modifier.testTag("nav_dashboard")
+                                        modifier = Modifier.testTag("nav_home")
                                     )
 
+                                    // 2. Chat
                                     NavigationBarItem(
-                                        selected = currentTab == ScreenTab.CHATS,
-                                        onClick = { currentTab = ScreenTab.CHATS },
+                                        selected = currentTab == ScreenTab.CHAT,
+                                        onClick = { currentTab = ScreenTab.CHAT },
                                         icon = {
                                             BadgedBox(badge = {
                                                 if (chatSessions.isNotEmpty()) {
                                                     Badge { Text("${chatSessions.size}") }
                                                 }
                                             }) {
-                                                Icon(Icons.Default.Chat, contentDescription = "Chats")
+                                                Icon(Icons.Default.Chat, contentDescription = "Chat")
                                             }
                                         },
-                                        label = { Text("Chats") },
+                                        label = { Text("Chat") },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = CyberTeal,
                                             indicatorColor = MaterialTheme.colorScheme.surfaceVariant
                                         ),
-                                        modifier = Modifier.testTag("nav_chats")
+                                        modifier = Modifier.testTag("nav_chat")
                                     )
 
-                                    NavigationBarItem(
-                                        selected = currentTab == ScreenTab.VAULT,
-                                        onClick = { currentTab = ScreenTab.VAULT },
-                                        icon = {
-                                            Icon(Icons.Default.FolderShared, contentDescription = "Vault")
-                                        },
-                                        label = { Text("Vault") },
-                                        colors = NavigationBarItemDefaults.colors(
-                                            selectedIconColor = CyberTeal,
-                                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant
-                                        ),
-                                        modifier = Modifier.testTag("nav_vault")
-                                    )
-
+                                    // 3. Tasks
                                     NavigationBarItem(
                                         selected = currentTab == ScreenTab.TASKS,
                                         onClick = { currentTab = ScreenTab.TASKS },
                                         icon = {
-                                            val unreadCount = notifications.count { !it.isRead }
+                                            val runningCount = tasks.count { it.status == "RUNNING" }
                                             BadgedBox(badge = {
-                                                if (unreadCount > 0) {
-                                                    Badge { Text("$unreadCount") }
+                                                if (runningCount > 0) {
+                                                    Badge { Text("$runningCount") }
                                                 }
                                             }) {
-                                                Icon(Icons.Default.ListAlt, contentDescription = "Tasks")
+                                                Icon(Icons.Default.SmartToy, contentDescription = "Tasks")
                                             }
                                         },
                                         label = { Text("Tasks") },
@@ -181,25 +190,48 @@ class MainActivity : FragmentActivity() {
                                         modifier = Modifier.testTag("nav_tasks")
                                     )
 
+                                    // 4. Alerts
                                     NavigationBarItem(
-                                        selected = currentTab == ScreenTab.SETTINGS,
-                                        onClick = { currentTab = ScreenTab.SETTINGS },
+                                        selected = currentTab == ScreenTab.ALERTS,
+                                        onClick = { currentTab = ScreenTab.ALERTS },
                                         icon = {
-                                            Icon(Icons.Default.Settings, contentDescription = "Node")
+                                            val unacknowledgedCount = notifications.count { !it.isAcknowledged }
+                                            BadgedBox(badge = {
+                                                if (unacknowledgedCount > 0) {
+                                                    Badge(containerColor = StatusRed) { Text("$unacknowledgedCount") }
+                                                }
+                                            }) {
+                                                Icon(Icons.Default.NotificationsActive, contentDescription = "Alerts")
+                                            }
                                         },
-                                        label = { Text("Node") },
+                                        label = { Text("Alerts") },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = CyberTeal,
                                             indicatorColor = MaterialTheme.colorScheme.surfaceVariant
                                         ),
-                                        modifier = Modifier.testTag("nav_settings")
+                                        modifier = Modifier.testTag("nav_alerts")
+                                    )
+
+                                    // 5. Files
+                                    NavigationBarItem(
+                                        selected = currentTab == ScreenTab.FILES,
+                                        onClick = { currentTab = ScreenTab.FILES },
+                                        icon = {
+                                            Icon(Icons.Default.FolderShared, contentDescription = "Files")
+                                        },
+                                        label = { Text("Files") },
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = CyberTeal,
+                                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant
+                                        ),
+                                        modifier = Modifier.testTag("nav_files")
                                     )
                                 }
                             }
                         ) { innerPadding ->
                             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                                 when (currentTab) {
-                                    ScreenTab.DASHBOARD -> DashboardScreen(
+                                    ScreenTab.HOME -> DashboardScreen(
                                         connectionStatus = connectionStatus,
                                         lastSyncTimestamp = lastSyncTimestamp,
                                         isSyncing = isSyncing,
@@ -208,15 +240,24 @@ class MainActivity : FragmentActivity() {
                                         tasks = tasks,
                                         notifications = notifications,
                                         onSyncClick = { viewModel.triggerSync() },
-                                        onNavigateChats = { currentTab = ScreenTab.CHATS },
-                                        onNavigateVault = { currentTab = ScreenTab.VAULT },
+                                        onNavigateChats = { currentTab = ScreenTab.CHAT },
+                                        onNavigateVault = { currentTab = ScreenTab.FILES },
                                         onNavigateTasks = { currentTab = ScreenTab.TASKS },
+                                        onNavigateAlerts = { currentTab = ScreenTab.ALERTS },
                                         onNavigateSettings = { currentTab = ScreenTab.SETTINGS },
                                         onLockClick = { viewModel.lockVault() },
-                                        onNotificationClick = { viewModel.markNotificationRead(it) }
+                                        onNotificationClick = { viewModel.markNotificationRead(it) },
+                                        onQuickAction = { actionName ->
+                                            when (actionName) {
+                                                "Morning Administrator Brief" -> viewModel.startAgent(actionName)
+                                                "Daily Clinical Surveillance" -> viewModel.runPlaybook(actionName)
+                                                "Antipsychotic Review" -> viewModel.runPlaybook(actionName)
+                                                else -> viewModel.startAgent(actionName)
+                                            }
+                                        }
                                     )
 
-                                    ScreenTab.CHATS -> ChatListScreen(
+                                    ScreenTab.CHAT -> ChatListScreen(
                                         sessions = chatSessions,
                                         decryptText = { viewModel.decrypt(it) },
                                         onSessionClick = { viewModel.selectSession(it) },
@@ -224,27 +265,46 @@ class MainActivity : FragmentActivity() {
                                         onDeleteSession = { viewModel.deleteSession(it) }
                                     )
 
-                                    ScreenTab.VAULT -> DocumentVaultScreen(
+                                    ScreenTab.TASKS -> TasksScreen(
+                                        tasks = tasks,
+                                        connectionStatus = connectionStatus,
+                                        hostIp = "${nodeConfig.hostIp}:${nodeConfig.port}",
+                                        onStartAgent = { viewModel.startAgent(it) },
+                                        onRunPlaybook = { viewModel.runPlaybook(it) },
+                                        onCancelTask = { viewModel.cancelTask(it) },
+                                        onRetryTask = { viewModel.retryTask(it) },
+                                        onSubmitApproval = { id, approved -> viewModel.submitApproval(id, approved) },
+                                        onRefreshTasks = { viewModel.triggerSync() }
+                                    )
+
+                                    ScreenTab.ALERTS -> AlertsScreen(
+                                        alerts = notifications,
+                                        connectionStatus = connectionStatus,
+                                        hostIp = "${nodeConfig.hostIp}:${nodeConfig.port}",
+                                        onAcknowledgeAlert = { viewModel.acknowledgeAlert(it) },
+                                        onApproveAction = { id, approved -> viewModel.submitApproval(id, approved) },
+                                        onRunAnalysis = { analysisName -> viewModel.runPlaybook(analysisName) },
+                                        onMarkAllRead = { viewModel.markAllNotificationsRead() }
+                                    )
+
+                                    ScreenTab.FILES -> DocumentVaultScreen(
                                         documents = documents,
                                         decryptText = { viewModel.decrypt(it) },
                                         onSaveDocument = { name, type, content, tags ->
                                             viewModel.saveDocument(name, type, content, tags)
                                         },
-                                        onDeleteDocument = { viewModel.deleteDocument(it) }
-                                    )
-
-                                    ScreenTab.TASKS -> TasksScreen(
-                                        tasks = tasks,
-                                        notifications = notifications,
-                                        onNotificationClick = { viewModel.markNotificationRead(it) },
-                                        onMarkAllNotificationsRead = { viewModel.markAllNotificationsRead() },
-                                        onRefreshTasks = { viewModel.triggerSync() }
+                                        onDeleteDocument = { viewModel.deleteDocument(it) },
+                                        onSendDocToChat = { title, content ->
+                                            viewModel.createNewChat("Doc: $title", "Analyze this report:\n\n$content")
+                                        }
                                     )
 
                                     ScreenTab.SETTINGS -> NodeSettingsScreen(
                                         currentConfig = nodeConfig,
                                         connectionStatus = connectionStatus,
+                                        secureClinicalMode = secureClinicalMode,
                                         onSaveConfig = { viewModel.updateNodeConfig(it) },
+                                        onToggleSecureClinicalMode = { viewModel.setSecureClinicalMode(it) },
                                         onTestConnection = { viewModel.triggerSync() },
                                         onLockVault = { viewModel.lockVault() }
                                     )
@@ -253,7 +313,7 @@ class MainActivity : FragmentActivity() {
                         }
                     }
 
-                    // Biometric Lock Gate (Prevents unauthorized local access)
+                    // Biometric Lock Gate (Hardware Keystore & Biometric authorization)
                     if (!isUnlocked) {
                         BiometricLockOverlay(
                             onTriggerBiometrics = {

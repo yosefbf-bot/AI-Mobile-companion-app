@@ -19,23 +19,43 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -46,156 +66,456 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.local.entity.DesktopNotification
 import com.example.data.local.entity.DesktopTask
+import com.example.data.model.ConnectionStatus
+import com.example.ui.components.ConnectionStatusBadge
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberTeal
 import com.example.ui.theme.StatusAmber
+import com.example.ui.theme.StatusRed
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TasksScreen(
     tasks: List<DesktopTask>,
-    notifications: List<DesktopNotification>,
-    onNotificationClick: (String) -> Unit,
-    onMarkAllNotificationsRead: () -> Unit,
+    connectionStatus: ConnectionStatus,
+    hostIp: String,
+    onStartAgent: (String) -> Unit,
+    onRunPlaybook: (String) -> Unit,
+    onCancelTask: (String) -> Unit,
+    onRetryTask: (String) -> Unit,
+    onSubmitApproval: (String, Boolean) -> Unit,
     onRefreshTasks: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var selectedTabIndex by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Workstation Tasks (${tasks.size})", "Desktop Alerts (${notifications.count { !it.isRead }})")
+    var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "RUNNING", "NEEDS_APPROVAL", "COMPLETED"
+    var showLauncherSheet by remember { mutableStateOf(false) }
+    var selectedTaskForDetails by remember { mutableStateOf<DesktopTask?>(null) }
 
-    Column(modifier = modifier.fillMaxSize().testTag("tasks_screen")) {
-        TabRow(
-            selectedTabIndex = selectedTabIndex,
-            containerColor = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.primary
-        ) {
-            tabs.forEachIndexed { index, title ->
-                Tab(
-                    selected = selectedTabIndex == index,
-                    onClick = { selectedTabIndex = index },
-                    text = {
+    val filteredTasks = remember(tasks, selectedFilter) {
+        when (selectedFilter) {
+            "RUNNING" -> tasks.filter { it.status == "RUNNING" }
+            "NEEDS_APPROVAL" -> tasks.filter { it.requiresApproval || it.status == "NEEDS_APPROVAL" }
+            "COMPLETED" -> tasks.filter { it.status == "COMPLETED" }
+            else -> tasks
+        }
+    }
+
+    val runningCount = tasks.count { it.status == "RUNNING" }
+    val approvalCount = tasks.count { it.requiresApproval || it.status == "NEEDS_APPROVAL" }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize().testTag("tasks_screen"),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
                         Text(
-                            text = title,
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                            text = "Agents, Tasks & Playbooks",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
-                    },
-                    modifier = Modifier.testTag("tasks_tab_$index")
-                )
+                        Text(
+                            text = "$runningCount active • $approvalCount requiring approval",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = if (approvalCount > 0) StatusAmber else CyberTeal,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onRefreshTasks, modifier = Modifier.testTag("refresh_tasks_button")) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh tasks")
+                    }
+                    ConnectionStatusBadge(
+                        status = connectionStatus,
+                        hostIp = hostIp,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showLauncherSheet = true },
+                containerColor = CyberTeal,
+                contentColor = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.testTag("start_agent_fab")
+            ) {
+                Icon(imageVector = Icons.Default.Add, contentDescription = "Start Agent or Playbook")
             }
         }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            // Filter chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = selectedFilter == "ALL",
+                    onClick = { selectedFilter = "ALL" },
+                    label = { Text("All (${tasks.size})") },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CyberTeal.copy(alpha = 0.2f))
+                )
+                FilterChip(
+                    selected = selectedFilter == "RUNNING",
+                    onClick = { selectedFilter = "RUNNING" },
+                    label = { Text("Running ($runningCount)") },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CyberCyan.copy(alpha = 0.2f))
+                )
+                FilterChip(
+                    selected = selectedFilter == "NEEDS_APPROVAL",
+                    onClick = { selectedFilter = "NEEDS_APPROVAL" },
+                    label = { Text("Approval ($approvalCount)") },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = StatusAmber.copy(alpha = 0.2f))
+                )
+                FilterChip(
+                    selected = selectedFilter == "COMPLETED",
+                    onClick = { selectedFilter = "COMPLETED" },
+                    label = { Text("Completed") },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = CyberTeal.copy(alpha = 0.2f))
+                )
+            }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (selectedTabIndex == 0) {
-            // Tasks Tab
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            if (filteredTasks.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Workstation Compute Pipeline",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    FilledTonalButton(
-                        onClick = onRefreshTasks,
-                        modifier = Modifier.testTag("refresh_tasks_button")
-                    ) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Poll Host", style = MaterialTheme.typography.labelSmall)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.SmartToy,
+                            contentDescription = "No tasks",
+                            tint = CyberTeal.copy(alpha = 0.5f),
+                            modifier = Modifier.size(64.dp)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No Tasks in this Filter",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Use the '+' button to dispatch an agent or start a saved playbook on Windows host.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (tasks.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text("No active or queued tasks.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(tasks, key = { it.id }) { task ->
-                            DesktopTaskCard(task = task)
-                        }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(filteredTasks, key = { it.id }) { task ->
+                        TaskCard(
+                            task = task,
+                            onCancel = { onCancelTask(task.id) },
+                            onRetry = { onRetryTask(task.id) },
+                            onApprove = { onSubmitApproval(task.id, true) },
+                            onReject = { onSubmitApproval(task.id, false) },
+                            onOpenDetails = { selectedTaskForDetails = task }
+                        )
                     }
                 }
             }
-        } else {
-            // Notifications Tab
-            Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+        }
+    }
+
+    // Agent / Playbook Launcher Bottom Sheet
+    if (showLauncherSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showLauncherSheet = false },
+            sheetState = rememberModalBottomSheetState(),
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Dispatch Agent or Playbook",
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                )
+                Text(
+                    text = "Commands are sent remotely to Windows Private AI runtime. All heavy processing runs on desktop workstation.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                val availableAgents = listOf(
+                    "Morning Administrator Brief" to "Synthesizes clinical incidents, staffing census, and regulatory flags.",
+                    "Daily Clinical Surveillance" to "Runs infection control, medication titration, and fall risk scans across EHR.",
+                    "Antipsychotic Review" to "Analyzes GDR eligibility and behavioral logs for regulatory compliance.",
+                    "Staffing Analysis" to "Evaluates PM/NOC staffing ratios and pre-fills float pool allocations.",
+                    "Weekly Operations Review" to "Aggregates budget variance, overtime metrics, and department KPIs.",
+                    "Document Analysis" to "Deep OCR, structured schema extraction, and audit report generation.",
+                    "Research Agent" to "Cross-references medical literature and protocol updates locally.",
+                    "Browser Agent" to "Automates secure portal checks and laboratory result verification."
+                )
+
+                LazyColumn(
+                    modifier = Modifier.height(380.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = "Desktop Events & Alerts",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-                    FilledTonalButton(
-                        onClick = onMarkAllNotificationsRead,
-                        modifier = Modifier.testTag("mark_all_read_button")
-                    ) {
-                        Text("Mark All Read", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                if (notifications.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                        Text("No notifications.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(notifications, key = { it.id }) { notif ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onNotificationClick(notif.id) }
-                                    .testTag("notif_card_${notif.id}"),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (notif.isRead) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
-                                )
+                    items(availableAgents) { (name, desc) ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showLauncherSheet = false
+                                    onStartAgent(name)
+                                }
+                                .testTag("launch_agent_$name"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(CyberTeal.copy(alpha = 0.2f)),
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
-                                        imageVector = if (notif.isRead) Icons.Default.CheckCircle else Icons.Default.Notifications,
-                                        contentDescription = "Event",
-                                        tint = if (notif.isRead) MaterialTheme.colorScheme.onSurfaceVariant else CyberTeal,
-                                        modifier = Modifier.size(22.dp)
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Run",
+                                        tint = CyberTeal,
+                                        modifier = Modifier.size(20.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = notif.title,
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = notif.message,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(text = name, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+                                    Text(text = desc, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // Task Details Modal
+    selectedTaskForDetails?.let { task ->
+        AlertDialog(
+            onDismissRequest = { selectedTaskForDetails = null },
+            title = {
+                Text(text = task.title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = "Status: ${task.status}", color = getTaskStatusColor(task.status), fontWeight = FontWeight.Bold)
+                    Text(text = "Category: ${task.category}", style = MaterialTheme.typography.bodySmall)
+                    Text(text = "Model: ${task.modelName}", style = MaterialTheme.typography.bodySmall, color = CyberTeal)
+
+                    task.resultSummary?.let { summary ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
+                                .padding(10.dp)
+                        ) {
+                            Text(text = summary, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+
+                    Text(
+                        text = "Started: ${SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(task.startedAt))}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedTaskForDetails = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun TaskCard(
+    task: DesktopTask,
+    onCancel: () -> Unit,
+    onRetry: () -> Unit,
+    onApprove: () -> Unit,
+    onReject: () -> Unit,
+    onOpenDetails: () -> Unit
+) {
+    val statusColor = getTaskStatusColor(task.status)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenDetails)
+            .testTag("task_card_${task.id}"),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(statusColor)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = task.status,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = statusColor)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "• ${task.category}",
+                        style = MaterialTheme.typography.labelSmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    )
+                }
+
+                Text(
+                    text = "${(task.progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, color = CyberTeal)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = task.title,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+            )
+
+            // Model badge
+            Text(
+                text = "Model: ${task.modelName}",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, color = CyberTeal)
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (task.status == "RUNNING") {
+                LinearProgressIndicator(
+                    progress = { task.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = CyberTeal,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            task.resultSummary?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            // Approval Prompt
+            if (task.requiresApproval || task.status == "NEEDS_APPROVAL") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(StatusAmber.copy(alpha = 0.15f), RoundedCornerShape(8.dp))
+                        .padding(10.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = "Approval Required",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, color = StatusAmber)
+                        )
+                        task.approvalPrompt?.let { prompt ->
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(text = prompt, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onApprove,
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberTeal),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("Approve", style = MaterialTheme.typography.labelSmall)
+                            }
+                            OutlinedButton(
+                                onClick = onReject,
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("Reject", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Action row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (task.status == "RUNNING") {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Cancel, contentDescription = "Cancel", modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Cancel", style = MaterialTheme.typography.labelSmall)
+                    }
+                } else if (task.status == "FAILED") {
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberTeal),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = "Retry", modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Retry", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -203,99 +523,12 @@ fun TasksScreen(
     }
 }
 
-@Composable
-fun DesktopTaskCard(task: DesktopTask) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("task_card_${task.id}"),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        ),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        imageVector = if (task.status == "RUNNING") Icons.Default.PlayCircle else Icons.Default.CheckCircle,
-                        contentDescription = task.status,
-                        tint = if (task.status == "RUNNING") CyberTeal else CyberCyan,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = task.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(
-                            if (task.status == "RUNNING") CyberTeal.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = task.status,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = if (task.status == "RUNNING") CyberTeal else MaterialTheme.colorScheme.onSurface
-                        )
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = "Model: ${task.modelName}",
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            if (task.status == "RUNNING") {
-                Spacer(modifier = Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { task.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = CyberTeal
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "${(task.progress * 100).toInt()}% completed on Workstation GPU",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            if (!task.resultSummary.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        text = task.resultSummary,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-            }
-        }
+fun getTaskStatusColor(status: String): androidx.compose.ui.graphics.Color {
+    return when (status) {
+        "RUNNING" -> CyberTeal
+        "COMPLETED" -> CyberCyan
+        "NEEDS_APPROVAL" -> StatusAmber
+        "FAILED" -> StatusRed
+        else -> StatusAmber
     }
 }
