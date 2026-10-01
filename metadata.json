@@ -1,0 +1,6 @@
+{
+  "name": "Private AI",
+  "description": "Secure companion app for Private AI with end-to-end encrypted chats, document vault, biometrics, and zero-cost local sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
