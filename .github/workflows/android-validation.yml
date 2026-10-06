@@ -40,8 +40,16 @@ jobs:
           sudo chmod a+rw /dev/kvm
           echo no | avdmanager create avd -n privateai_api34 -k "system-images;android-34;google_apis;x86_64" --force
           nohup emulator -avd privateai_api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 2048 >"$RUNNER_TEMP/privateai-emulator.log" 2>&1 &
-          adb wait-for-device
+          emulator_pid=$!
+          if ! timeout 90s adb wait-for-device; then
+            cat "$RUNNER_TEMP/privateai-emulator.log"
+            exit 1
+          fi
           for attempt in $(seq 1 60); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/privateai-emulator.log"
+              exit 1
+            fi
             if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; then break; fi
             sleep 3
           done
@@ -54,8 +62,11 @@ jobs:
       - name: Capture disposable emulator failure evidence
         if: failure()
         run: |
+          mkdir -p app/build/reports/ci-emulator
+          if [ -f "$RUNNER_TEMP/privateai-emulator.log" ]; then
+            cp "$RUNNER_TEMP/privateai-emulator.log" app/build/reports/ci-emulator/emulator.log
+          fi
           if adb get-state >/dev/null 2>&1; then
-            mkdir -p app/build/reports/ci-emulator
             adb exec-out screencap -p >app/build/reports/ci-emulator/screen.png || true
             adb shell uiautomator dump /sdcard/privateai-ci-window.xml >/dev/null 2>&1 || true
             adb pull /sdcard/privateai-ci-window.xml app/build/reports/ci-emulator/window.xml >/dev/null 2>&1 || true
