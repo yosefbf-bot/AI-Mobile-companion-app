@@ -19,12 +19,20 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          cmdline-tools-version: "12266719"
+          packages: "platform-tools"
+          log-accepted-android-sdk-licenses: "false"
       - name: Verify wrapper and prepare SDK
         run: |
           echo "b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
           chmod +x gradlew
           (yes || true) | sdkmanager --licenses >/dev/null
           sdkmanager "platforms;android-36.1" "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-34;google_apis;x86_64"
+          test -x "$ANDROID_HOME/emulator/emulator"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
       - name: Build and run regression tests and lint
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug assembleDebugAndroidTest
       - name: Start isolated Android emulator
