@@ -38,7 +38,14 @@ jobs:
       - name: Start isolated Android emulator
         run: |
           sudo chmod a+rw /dev/kvm
-          echo no | avdmanager create avd -n privateai_api34 -k "system-images;android-34;google_apis;x86_64" --force
+          # Both SDK creation and emulator launch must resolve the same disposable AVD.
+          export ANDROID_USER_HOME="$RUNNER_TEMP/privateai-android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd -n privateai_api34 -k "system-images;android-34;google_apis;x86_64" -p "$ANDROID_AVD_HOME/privateai_api34.avd" --force
+          test -f "$ANDROID_AVD_HOME/privateai_api34.ini"
+          emulator -list-avds | grep -Fx privateai_api34
           nohup emulator -avd privateai_api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 2048 >"$RUNNER_TEMP/privateai-emulator.log" 2>&1 &
           emulator_pid=$!
           if ! timeout 90s adb wait-for-device; then

@@ -35,6 +35,20 @@ The remaining automated acceptance is the GitHub workflow's isolated Android emu
 
 ## Required acceptance still distinct from compiler/unit tests
 
+Hosted check `e853a86`, PR run `37395427311`, passed SDK setup, app/test APK
+build, unit tests and lint. Its reports contain 44 passing unit cases and one
+explicitly skipped external desktop-fixture case, no failures/errors, and 74
+lint warnings with no errors. Emulator startup failed with **Unknown AVD name**:
+creation and launch resolved different AVD directories. OS-authentication tests
+were skipped; no device pass is claimed from that run. The workflow now uses one
+explicit disposable AVD directory, verifies its INI/list entry, bounds startup,
+and retains launch diagnostics even without an attached device. The positive
+OS-authentication test also scrolls to the lazy dashboard card before checking
+its visibility, so a smaller screen cannot produce a false missing-card failure.
+These changes affect CI/test/documentation only; the production input digest and
+local APK above are unchanged. Inspect the subsequent exact-head run for actual
+device test execution and counts.
+
 - Real Android OS authentication successfully unlocks an existing/new Keystore vault; cancellation, lock, backgrounding, and five-minute expiry close it.
 - Existing v2/v3 vault upgrades preserve data, migrate the retired encryption, label old synthetic/unverified caches, and retain any unpaired queue for review. Corruption/unsupported schemas must preserve the original database.
 - External photo/file selection survives the authentication gate, restores the encrypted unsent draft, and remains an unsent preview until explicitly submitted. Pairing changes must not redirect pending evidence.

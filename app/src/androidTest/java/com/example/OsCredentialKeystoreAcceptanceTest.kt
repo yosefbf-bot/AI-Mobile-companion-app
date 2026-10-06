@@ -2,11 +2,13 @@ package com.example
 
 import android.app.KeyguardManager
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -47,7 +49,8 @@ class OsCredentialKeystoreAcceptanceTest {
         assertEquals("Synthetic emulator acceptance note", EncryptionManager.decrypt(protected))
         rule.waitUntil(20_000) { rule.onAllNodesWithTag("nav_home").fetchSemanticsNodes().isNotEmpty() }
         rule.onNodeWithTag("nav_home").assertIsDisplayed()
-        rule.onNodeWithText("Not an all-clear").assertExists()
+        rule.onNodeWithTag("dashboard_screen").performScrollToNode(hasText("Not an all-clear"))
+        rule.onNodeWithText("Not an all-clear").assertIsDisplayed()
         rule.onNodeWithText("All clear").assertDoesNotExist()
         rule.onNodeWithText("Running on PC").assertDoesNotExist()
         rule.onNodeWithTag("notes_followups_button").performClick()
