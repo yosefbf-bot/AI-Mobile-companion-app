@@ -11,8 +11,11 @@ data class EncryptedChatSession(
     val createdAt: Long = System.currentTimeMillis(),
     val lastMessagePreviewEncrypted: String = "",
     val lastMessageTimestamp: Long = System.currentTimeMillis(),
-    val modelUsed: String = "Llama-3-70B-Instruct (Local)",
-    val isSynced: Boolean = true
+    val modelUsed: String = "Unavailable",
+    val isSynced: Boolean = false,
+    val desktopChatId: String? = null,
+    val desktopRevision: Long = 0,
+    val storageVersion: Int = 0
 )
 
 @Entity(tableName = "chat_messages")
@@ -23,12 +26,20 @@ data class EncryptedChatMessage(
     val sender: String, // "user" or "assistant"
     val encryptedContent: String, // AES-256-GCM ciphertext
     val timestamp: Long = System.currentTimeMillis(),
-    val status: String = "SYNCED_DESKTOP", // "QUEUED_OFFLINE", "SYNCED_DESKTOP", "PENDING_INFERENCE"
+    val status: String = "PENDING_INFERENCE", // A desktop acknowledgment is required for SYNCED_DESKTOP.
     val promptTokens: Int = 0,
     val completionTokens: Int = 0,
-    val modelName: String = "Private-AI Local",
+    val modelName: String = "Unavailable",
     val attachmentName: String? = null,
     val attachmentType: String? = null, // "IMAGE", "DOCUMENT", "CODE"
     val attachmentDataEncrypted: String? = null, // AES-256-GCM encrypted Base64
-    val attachmentSize: Long = 0L
+    val attachmentSize: Long = 0L,
+    val requestId: String = id,
+    val deliveryError: String? = null,
+    val attemptedAt: Long? = null,
+    val desktopMessageId: String? = null,
+    val desktopFingerprint: String? = null,
+    val requireLocal: Boolean = true,
+    val requireHipaa: Boolean = true,
+    val storageVersion: Int = 0
 )

@@ -1,389 +1,300 @@
 package com.example
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import com.example.data.crypto.AttachmentUtils
-import com.example.data.crypto.EncryptionManager
+import com.example.data.crypto.*
 import com.example.data.local.AppDatabase
-import com.example.data.local.entity.DesktopNotification
-import com.example.data.local.entity.DesktopTask
-import com.example.data.local.entity.EncryptedChatMessage
-import com.example.data.local.entity.EncryptedChatSession
-import com.example.data.local.entity.EncryptedDocument
-import com.example.data.model.BatteryOptimizationMode
-import com.example.data.model.ConnectionStatus
+import com.example.data.local.entity.*
 import com.example.data.model.DesktopNodeConfig
-import com.example.data.network.DesktopNodeService
-import com.example.data.network.GatewayEndpoints
-import com.example.data.repository.PrivateAIRepository
+import com.example.data.notifications.FollowUpNotifications
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
+import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.ByteArrayInputStream
 import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class FeatureErrorTesting {
-
-    private lateinit var database: AppDatabase
-    private lateinit var nodeService: DesktopNodeService
-    private lateinit var repository: PrivateAIRepository
     private lateinit var context: Context
+    private lateinit var database: AppDatabase
+    private lateinit var cipher: TestVaultCipher
+    private val diskNames = mutableListOf<String>()
 
-    @Before
-    fun setUp() {
+    @Before fun setup() {
         context = ApplicationProvider.getApplicationContext()
-        database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
-            .allowMainThreadQueries()
-            .build()
-        nodeService = DesktopNodeService()
-        repository = PrivateAIRepository(
-            database = database,
-            nodeService = nodeService
-        )
+        cipher = TestVaultCipher()
+        database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        EncryptionManager.initialize(context)
+        EncryptionManager.lock()
     }
-
-    @After
-    fun tearDown() {
+    @After fun cleanup() {
         database.close()
+        diskNames.forEach(context::deleteDatabase)
+        EncryptionManager.lock()
     }
 
-    // ==========================================
-    // STAGE 1: CONNECTIVITY & GATEWAY ERROR TESTS
-    // ==========================================
-
-    @Test
-    fun `test invalid node address fails health check when simulation disabled`() = runBlocking {
-        val brokenConfig = DesktopNodeConfig(
-            hostIp = "192.0.2.1", // Non-routable TEST-NET-1 IP
-            port = 9999,
-            pairKey = "invalid_token",
-            simulatedNodeEnabled = false
-        )
-        val isHealthy = nodeService.checkHealth(brokenConfig)
-        assertFalse("Unreachable node with simulatedNodeEnabled=false must return false", isHealthy)
+    @Test fun productionVaultRejectsAllReadsAndWritesWhileLocked() {
+        val previousGeneration = EncryptionManager.accessGeneration
+        EncryptionManager.lock()
+        assertTrue(EncryptionManager.accessGeneration > previousGeneration)
+        assertThrows(VaultUnavailableException::class.java) { EncryptionManager.encrypt("private") }
+        assertThrows(VaultUnavailableException::class.java) { EncryptionManager.decrypt("ENC:private") }
+        assertFalse(EncryptionManager.isUnlocked.value)
     }
 
-    @Test
-    fun `test gateway endpoints syntax and versioning`() {
-        assertTrue(GatewayEndpoints.STATUS.startsWith("/mobile/api/v1/"))
-        assertTrue(GatewayEndpoints.AUTH_PAIR.startsWith("/mobile/api/v1/"))
-        assertTrue(GatewayEndpoints.CHATS.startsWith("/mobile/api/v1/"))
-        assertTrue(GatewayEndpoints.TASKS.startsWith("/mobile/api/v1/"))
-        assertTrue(GatewayEndpoints.ALERTS.startsWith("/mobile/api/v1/"))
-        assertTrue(GatewayEndpoints.FILES_UPLOAD.startsWith("/mobile/api/v1/"))
-        assertTrue(GatewayEndpoints.EVENTS_WS.startsWith("/mobile/api/v1/"))
+    @Test fun arbitraryApplicationPinsNeverAuthenticate() {
+        val auth = BiometricAuthManager(context)
+        listOf("", "1234", "0000", "123456", "abcdef").forEach { assertFalse(auth.unlockWithPin(it)) }
+        assertFalse(auth.isUnlocked.value)
     }
 
-    @Test
-    fun `test malformed port fallback handling`() {
-        val invalidPortString = "not_a_number"
-        val resolvedPort = invalidPortString.toIntOrNull() ?: 8443
-        assertEquals(8443, resolvedPort)
+    @Test fun authenticatedCodecRejectsPlaintextTamperAndDifferentKeys() {
+        val encrypted = cipher.encrypt("Synthetic protected note")
+        assertTrue(encrypted.startsWith(VaultCodec.PREFIX))
+        assertEquals("Synthetic protected note", cipher.decrypt(encrypted))
+        assertNotEquals(encrypted, cipher.encrypt("Synthetic protected note"))
+        assertThrows(IllegalArgumentException::class.java) { cipher.decrypt("ENC:unsafe") }
+        val mutated = encrypted.dropLast(5) + "AAAA="
+        assertThrows(Exception::class.java) { cipher.decrypt(mutated) }
+        assertThrows(Exception::class.java) { TestVaultCipher().decrypt(encrypted) }
     }
 
-    // ==========================================
-    // STAGE 2: CHAT & STREAMING ERROR TESTS
-    // ==========================================
-
-    @Test
-    fun `test decryption of corrupted ciphertext does not crash`() {
-        val corruptedPayload = "NOT_VALID_BASE64_CIPHERTEXT_!!!@@@"
-        val decrypted = EncryptionManager.decrypt(corruptedPayload)
-        // Decryption of invalid ciphertext safely returns fallback string instead of crashing
-        assertNotNull(decrypted)
-        assertTrue(decrypted.isNotEmpty())
+    @Test fun allSensitiveMetadataAndContentsStayEncryptedAtRest() = runBlocking {
+        val row = EncryptedChatMessage("m", "s", "user", cipher.encrypt("Synthetic private body"),
+            attachmentName = "Synthetic Resident.pdf", deliveryError = "Synthetic confidential error")
+        database.chatDao().insertMessage(VaultRecords.encode(row, cipher))
+        val raw = database.chatDao().messageById("m")!!
+        assertTrue(raw.encryptedContent.startsWith(VaultCodec.PREFIX))
+        assertTrue(raw.attachmentName!!.startsWith(VaultCodec.PREFIX))
+        assertTrue(raw.deliveryError!!.startsWith(VaultCodec.PREFIX))
+        assertEquals("Synthetic Resident.pdf", VaultRecords.decode(raw, cipher).attachmentName)
+        assertEquals("Synthetic private body", cipher.decrypt(raw.encryptedContent))
     }
 
-    @Test
-    fun `test offline chat message is queued when disconnected`() = runBlocking {
-        // Disconnect repository
-        repository.updateConfig(
-            DesktopNodeConfig(
-                hostIp = "10.255.255.1",
-                port = 8443,
-                simulatedNodeEnabled = false
-            )
-        )
-        // Force status to disconnected
-        val isHealthy = repository.checkConnection()
-        assertFalse(isHealthy)
-        assertEquals(ConnectionStatus.DISCONNECTED, repository.connectionStatus.value)
-
-        val sessionId = repository.createNewSession("Offline Test Session")
-        repository.sendMessage(sessionId, "This prompt was typed while completely offline.")
-
-        val messages = repository.getMessagesForSession(sessionId).first()
-        val userMsg = messages.find { it.sender == "user" }
-        assertNotNull("User message must be saved locally even when offline", userMsg)
-        assertEquals("QUEUED_OFFLINE", userMsg?.status)
+    @Test fun pairingStorageIsEncryptedAndCannotLoadWhenLocked() {
+        val store = SecureConfigStore(context, cipher)
+        val config = DesktopNodeConfig(hostIp = "desktop.example.invalid", pairKey = "synthetic-device-secret",
+            certificateDer = "synthetic-certificate", certificateFingerprint = "synthetic-fingerprint",
+            simulatedNodeEnabled = false, scheme = "https")
+        store.save(config)
+        val file = java.io.File(context.noBackupFilesDir, "private-ai-gateway-v2.bin")
+        assertFalse(file.readText().contains(config.pairKey))
+        assertEquals(config.pairKey, store.load()!!.pairKey)
+        cipher.available = false
+        assertThrows(VaultUnavailableException::class.java) { store.load() }
+        cipher.available = true
+        assertThrows(IllegalArgumentException::class.java) { store.save(config.copy(scheme = "http")) }
+        store.clear()
+        assertNull(store.load())
     }
 
-    @Test
-    fun `test stop streaming halts active generation`() = runBlocking {
-        // Calling stopStreaming when no stream is active must not crash
-        repository.stopStreaming()
-
-        // Create session and test streaming trigger
-        val sessionId = repository.createNewSession("Streaming Stop Test")
-        repository.sendMessage(sessionId, "Explain deep neural network inference on GPU")
-
-        // Immediately request stop
-        repository.stopStreaming()
-
-        val messages = repository.getMessagesForSession(sessionId).first()
-        assertTrue("Messages list must exist and not crash", messages.isNotEmpty())
+    @Test fun restrictedNotificationOptInCannotPersistFullCredentialsWhileLocked() {
+        val store = RestrictedNotificationStore(context)
+        assertThrows(IllegalStateException::class.java) { store.save(DesktopNodeConfig(
+            pairKey = "a".repeat(43), notificationKey = "b".repeat(43)), true) }
+        assertFalse(store.isEnabled())
     }
 
-    @Test
-    fun `test empty prompt and empty attachment handling`() = runBlocking {
-        val sessionId = repository.createNewSession("Empty Prompt Test")
-        val initialCount = repository.getMessagesForSession(sessionId).first().size
-
-        // Send empty prompt with null attachment
-        repository.sendMessage(sessionId, "", null)
-
-        val newCount = repository.getMessagesForSession(sessionId).first().size
-        // Blank prompts should be ignored or safely handled
-        assertTrue(newCount >= initialCount)
+    @Test fun reminderReceiptIsSentOnlyAfterItsGenericNoticeWasAccepted() = runBlocking {
+        val receipts = mutableListOf<String>()
+        val json = org.json.JSONObject().put("notifications", org.json.JSONArray()
+            .put(org.json.JSONObject().put("id", "acknowledged").put("status", "acknowledged"))
+            .put(org.json.JSONObject().put("id", "displayed").put("status", "pending"))
+            .put(org.json.JSONObject().put("id", "permission-denied").put("status", "pending")))
+        assertFalse(FollowUpNotifications.deliverPending(json, { it != "permission-denied" }, {
+            receipts += it; true
+        }))
+        assertEquals(listOf("displayed"), receipts)
     }
 
-    // ==========================================
-    // STAGE 3: EXECUTIVE DASHBOARD ERROR TESTS
-    // ==========================================
-
-    @Test
-    fun `test zero alerts edge case calculation`() = runBlocking {
-        database.taskDao().clearAllNotifications()
-        val notifications = database.taskDao().getAllNotifications().first()
-        val criticalCount = notifications.count { it.severity == "CRITICAL" && !it.isAcknowledged }
-        val reviewCount = notifications.count { !it.isAcknowledged }
-
-        assertEquals(0, criticalCount)
-        assertEquals(0, reviewCount)
+    @Test fun attachmentReadsHonorDeclaredAndActualBounds() {
+        assertEquals(3, AttachmentUtils.readBounded(ByteArrayInputStream(byteArrayOf(1,2,3)), 3).size)
+        assertThrows(IllegalArgumentException::class.java) {
+            AttachmentUtils.readBounded(ByteArrayInputStream(byteArrayOf(1,2,3,4)), 3)
+        }
+        assertNull(AttachmentUtils.base64ToBitmap("A".repeat(12 * 1024 * 1024)))
     }
 
-    @Test
-    fun `test multiple unacknowledged critical alerts calculation`() = runBlocking {
-        val alert1 = DesktopNotification(
-            id = "alert-crit-1",
-            title = "Critical Alert 1",
-            message = "Test critical finding",
-            severity = "CRITICAL",
-            isAcknowledged = false
-        )
-        val alert2 = DesktopNotification(
-            id = "alert-crit-2",
-            title = "Critical Alert 2",
-            message = "Second critical finding",
-            severity = "CRITICAL",
-            isAcknowledged = false
-        )
-        val alert3 = DesktopNotification(
-            id = "alert-crit-3",
-            title = "Resolved Alert",
-            message = "Already resolved",
-            severity = "CRITICAL",
-            isAcknowledged = true
-        )
-        database.taskDao().insertNotifications(listOf(alert1, alert2, alert3))
-
-        val notifications = database.taskDao().getAllNotifications().first()
-        val activeCritical = notifications.count { it.severity == "CRITICAL" && !it.isAcknowledged }
-        assertEquals(2, activeCritical)
+    @Test fun replyReceiptIsAtomicIdempotentAndBoundToOriginalChat() = runBlocking {
+        val original = EncryptedChatMessage("request", "chat", "user", cipher.encrypt("request"),
+            status = "QUEUED_OFFLINE")
+        database.chatDao().insertMessage(VaultRecords.encode(original, cipher))
+        val reply = VaultRecords.encode(EncryptedChatMessage("reply-request", "chat", "assistant",
+            cipher.encrypt("reply"), status = "SYNCED_DESKTOP"), cipher)
+        database.chatDao().acknowledgeMessageWithReply("request", reply)
+        database.chatDao().acknowledgeMessageWithReply("request", reply)
+        assertEquals(2, database.chatDao().allMessagesForMigration().size)
+        assertEquals("SYNCED_DESKTOP", database.chatDao().messageById("request")!!.status)
+        assertThrows(IllegalArgumentException::class.java) { runBlocking {
+            database.chatDao().acknowledgeMessageWithReply("request", reply.copy(sessionId = "another-chat"))
+        } }
+        assertEquals(2, database.chatDao().allMessagesForMigration().size)
     }
 
-    // ==========================================
-    // STAGE 4: AGENTS & TASKS ERROR TESTS
-    // ==========================================
-
-    @Test
-    fun `test task cancellation transitions state to FAILED`() = runBlocking {
-        val runningTask = DesktopTask(
-            id = "test-task-cancel",
-            title = "Cancelable Agent",
-            status = "RUNNING",
-            category = "AGENT",
-            progress = 0.45f
-        )
-        database.taskDao().insertTask(runningTask)
-
-        // Cancel via repository
-        repository.cancelTask("test-task-cancel")
-
-        val updatedTask = database.taskDao().getTaskById("test-task-cancel").first()
-        assertNotNull(updatedTask)
-        assertEquals("FAILED", updatedTask?.status)
+    @Test fun refreshingDesktopHistoryPreservesUnsentAndReviewRequiredMessages() = runBlocking {
+        val pending = EncryptedChatMessage("p", "chat", "user", cipher.encrypt("pending"), status = "QUEUED_OFFLINE")
+        val review = pending.copy(id = "r", requestId = "r", status = "REVIEW_REQUIRED")
+        val oldRemote = pending.copy(id = "old", requestId = "old", status = "SYNCED_DESKTOP")
+        database.chatDao().insertMessages(listOf(pending, review, oldRemote).map { VaultRecords.encode(it, cipher) })
+        val remote = VaultRecords.encode(oldRemote.copy(id = "new", requestId = "new"), cipher)
+        database.chatDao().replaceSyncedHistory("chat", listOf(remote))
+        assertEquals(setOf("p", "r", "new"), database.chatDao().allMessagesForMigration().map { it.id }.toSet())
     }
 
-    @Test
-    fun `test task retry transitions state back to RUNNING`() = runBlocking {
-        val failedTask = DesktopTask(
-            id = "test-task-retry",
-            title = "Failed Agent",
-            status = "FAILED",
-            category = "PLAYBOOK",
-            progress = 0.20f
-        )
-        database.taskDao().insertTask(failedTask)
-
-        // Retry via repository
-        repository.retryTask("test-task-retry")
-
-        val retriedTask = database.taskDao().getTaskById("test-task-retry").first()
-        assertNotNull(retriedTask)
-        assertEquals("RUNNING", retriedTask?.status)
+    @Test fun notificationSyncDoesNotUndoLocalOrServerAcknowledgments() = runBlocking {
+        val alert = DesktopNotification("alert", "Synthetic title", "Synthetic text", timestamp = 1)
+        database.taskDao().insertNotification(VaultRecords.encode(alert.copy(isRead = true, isAcknowledged = true), cipher))
+        database.taskDao().mergeNotificationsPreservingLocalState(listOf(VaultRecords.encode(alert, cipher)))
+        assertTrue(database.taskDao().notificationById("alert")!!.isAcknowledged)
+        database.taskDao().insertNotification(VaultRecords.encode(alert.copy(id = "other"), cipher))
+        database.taskDao().mergeNotificationsPreservingLocalState(listOf(VaultRecords.encode(
+            alert.copy(id = "other", isAcknowledged = true), cipher)))
+        assertTrue(database.taskDao().notificationById("other")!!.isAcknowledged)
     }
 
-    @Test
-    fun `test supervisor approval and rejection states`() = runBlocking {
-        val approvalTask = DesktopTask(
-            id = "test-approval-task",
-            title = "Staffing Agent Approval",
-            status = "NEEDS_APPROVAL",
-            category = "AGENT",
-            requiresApproval = true,
-            approvalPrompt = "Broadcast PM shift?"
-        )
-        database.taskDao().insertTask(approvalTask)
-
-        // Reject action
-        repository.submitApproval("test-approval-task", false)
-        val rejectedTask = database.taskDao().getTaskById("test-approval-task").first()
-        assertEquals("REJECTED", rejectedTask?.status)
-
-        // Approve action
-        repository.submitApproval("test-approval-task", true)
-        val approvedTask = database.taskDao().getTaskById("test-approval-task").first()
-        assertEquals("RUNNING", approvedTask?.status)
+    @Test fun legacyContentMigrationPreservesRecordsAndRequiresReviewForUnpairedQueue() = runBlocking {
+        database.chatDao().insertSession(EncryptedChatSession("legacy-chat", "Old title"))
+        database.chatDao().insertMessage(EncryptedChatMessage("legacy-request", "legacy-chat", "user",
+            "ENC:Synthetic old body", status = "QUEUED_OFFLINE", attachmentName = "Old evidence.pdf"))
+        database.documentDao().insertDocument(EncryptedDocument("old-doc", "Old report", "TEXT",
+            "ENC:Synthetic old report", "checksum", 20))
+        val outcome = database.migrateLegacyContent(cipher)
+        assertEquals(3, outcome.migrated)
+        assertEquals(2, outcome.legacyPlaintext)
+        val message = database.chatDao().messageById("legacy-request")!!
+        assertEquals("REVIEW_REQUIRED", message.status)
+        assertNull(message.desktopFingerprint)
+        assertTrue(message.requireLocal)
+        assertTrue(message.requireHipaa)
+        assertEquals("Synthetic old body", cipher.decrypt(message.encryptedContent))
+        assertEquals("Old evidence.pdf", VaultRecords.decode(message, cipher).attachmentName)
+        assertEquals(0, database.migrateLegacyContent(cipher).migrated)
     }
 
-    // ==========================================
-    // STAGE 5: FILES & REPORTS ERROR TESTS
-    // ==========================================
-
-    @Test
-    fun `test tamper detection on document checksum mismatch`() {
-        val originalContent = "Confidential Patient Clinical Protocol v1.0"
-        val expectedSha256 = EncryptionManager.computeSha256(originalContent)
-
-        val tamperedContent = "Confidential Patient Clinical Protocol v1.0 (TAMPERED)"
-        val tamperedSha256 = EncryptionManager.computeSha256(tamperedContent)
-
-        assertNotEquals("Tampered content must have distinct SHA-256 hash", expectedSha256, tamperedSha256)
+    @Test fun failedLegacyMigrationRollsBackWithoutDiscardingOldData() = runBlocking {
+        database.chatDao().insertSession(EncryptedChatSession("s", "Preserved title"))
+        database.chatDao().insertMessage(EncryptedChatMessage("a", "s", "user", "ENC:Good old body", timestamp = 1))
+        database.chatDao().insertMessage(EncryptedChatMessage("b", "s", "user", "corrupt", timestamp = 2))
+        assertThrows(Exception::class.java) { runBlocking { database.migrateLegacyContent(cipher) } }
+        assertEquals("Preserved title", database.chatDao().allSessionsForMigration().single().title)
+        assertEquals(0, database.chatDao().allSessionsForMigration().single().storageVersion)
+        assertEquals("ENC:Good old body", database.chatDao().messageById("a")!!.encryptedContent)
     }
 
-    @Test
-    fun `test deleting non-existent document does not fail`() = runBlocking {
-        val nonExistentId = "non-existent-doc-uuid"
-        // Should execute smoothly without crashing
-        repository.deleteDocument(nonExistentId)
-        val docs = repository.documents.first()
-        assertFalse(docs.any { it.id == nonExistentId })
+    @Test fun retiredSyntheticClinicalRecordsRemainPreservedButCannotLookCurrent() = runBlocking {
+        database.taskDao().insertTask(DesktopTask("task-seed-1", "Synthetic completed work", "COMPLETED",
+            resultSummary = "Original synthetic result", requiresApproval = true))
+        database.taskDao().insertNotification(DesktopNotification("notif-1", "Synthetic critical finding",
+            "Original synthetic message", severity = "CRITICAL", requiresApproval = true))
+        database.migrateLegacyContent(cipher)
+        val task = VaultRecords.decode(database.taskDao().allTasksForMigration().single(), cipher)
+        val notification = VaultRecords.decode(database.taskDao().allNotificationsForMigration().single(), cipher)
+        assertTrue(task.title.startsWith("Legacy demo — unverified synthetic"))
+        assertEquals("REVIEW_REQUIRED", task.status)
+        assertFalse(task.requiresApproval)
+        assertTrue(task.resultSummary!!.contains("Original synthetic result"))
+        assertEquals("INFO", notification.severity)
+        assertEquals("LEGACY_UNVERIFIED", notification.category)
+        assertFalse(notification.requiresApproval)
+        assertTrue(notification.message.contains("Original synthetic message"))
+        assertTrue(notification.message.contains("Original severity: CRITICAL"))
     }
 
-    @Test
-    fun `test empty document creation handling`() = runBlocking {
-        val initialSize = repository.documents.first().size
-        repository.saveDocument("EmptyDoc.txt", "TEXT", "   ", "Test")
-        val newDocs = repository.documents.first()
-        assertTrue(newDocs.size >= initialSize)
+    @Test fun actualRetiredAesCiphertextAndAttachmentsMigrateIntoNewAuthenticatedFormat() = runBlocking {
+        val spec = javax.crypto.spec.PBEKeySpec("PrivateAI-MasterSecret-Key-2026".toCharArray(),
+            "PrivateAI_E2EE_LocalVault_Salt_v1".toByteArray(), 10000, 256)
+        val key = javax.crypto.spec.SecretKeySpec(javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            .generateSecret(spec).encoded, "AES")
+        fun retired(value: String): String {
+            val encryptor = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+            encryptor.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+            return android.util.Base64.encodeToString(encryptor.iv + encryptor.doFinal(value.toByteArray()), android.util.Base64.NO_WRAP)
+        }
+        database.chatDao().insertMessage(EncryptedChatMessage("old-aes", "old-chat", "user",
+            retired("Retired encrypted synthetic note"), attachmentDataEncrypted = retired("c3ludGhldGlj")))
+        val result = database.migrateLegacyContent(cipher)
+        assertEquals(1, result.migrated)
+        assertEquals(0, result.legacyPlaintext)
+        val saved = database.chatDao().messageById("old-aes")!!
+        assertEquals("Retired encrypted synthetic note", cipher.decrypt(saved.encryptedContent))
+        assertEquals("c3ludGhldGlj", cipher.decrypt(saved.attachmentDataEncrypted!!))
     }
 
-    // ==========================================
-    // STAGE 6: CLINICAL FEATURES & PHI SANITIZATION
-    // ==========================================
-
-    @Test
-    fun `test alert acknowledgment is idempotent`() = runBlocking {
-        val alert = DesktopNotification(
-            id = "alert-idempotent",
-            title = "GDR Review",
-            message = "Review due for psychotropic titration",
-            isAcknowledged = false
-        )
-        database.taskDao().insertNotification(alert)
-
-        // First acknowledgment
-        repository.acknowledgeAlert("alert-idempotent")
-        val ack1 = database.taskDao().getAllNotifications().first().find { it.id == "alert-idempotent" }
-        assertTrue(ack1?.isAcknowledged == true)
-
-        // Second acknowledgment of already acknowledged alert
-        repository.acknowledgeAlert("alert-idempotent")
-        val ack2 = database.taskDao().getAllNotifications().first().find { it.id == "alert-idempotent" }
-        assertTrue(ack2?.isAcknowledged == true)
+    @Test fun unsupportedHistoricalSchemaFailsAndPreservesItsDatabase() = runBlocking {
+        val disk = openHistoricalDatabase(1)
+        val name = diskNames.last()
+        try {
+            assertThrows(IllegalStateException::class.java) { runBlocking { disk.chatDao().allSessionsForMigration() } }
+        } finally { disk.close() }
+        SQLiteDatabase.openDatabase(context.getDatabasePath(name).path, null, SQLiteDatabase.OPEN_READONLY).use { old ->
+            assertEquals(1, old.version)
+            old.rawQuery("SELECT title FROM chat_sessions", null).use { cursor ->
+                assertTrue(cursor.moveToFirst()); assertEquals("Old v1 title", cursor.getString(0))
+            }
+        }
     }
 
-    @Test
-    fun `test secure clinical mode toggle state`() {
-        assertFalse(repository.secureClinicalMode.value)
-        repository.setSecureClinicalMode(true)
-        assertTrue(repository.secureClinicalMode.value)
-        repository.setSecureClinicalMode(false)
-        assertFalse(repository.secureClinicalMode.value)
+    @Test fun v3SchemaUpgradePreservesRowsAndAddsOutboxWithoutWiping() = runBlocking {
+        val disk = openHistoricalDatabase(3)
+        try {
+            assertEquals("old-v3", disk.chatDao().allSessionsForMigration().single().id)
+            assertEquals("Old v3 title", disk.chatDao().allSessionsForMigration().single().title)
+            assertEquals(0, disk.chatDao().allSessionsForMigration().single().storageVersion)
+            assertTrue(disk.pendingOperationDao().pending("fingerprint").isEmpty())
+        } finally { disk.close() }
     }
 
-    @Test
-    fun `test phi sanitization in notification previews`() {
-        val rawMessage = "Elevated fall risk & psychotropic titration detected for resident in Unit 3 requiring review."
-        // Verify no raw SSN or MRN format exists in default alerts
-        assertFalse(rawMessage.contains("SSN:"))
-        assertFalse(rawMessage.contains("MRN:"))
-        assertFalse(rawMessage.contains("DOB:"))
+    @Test fun v2SchemaUpgradePreservesOldNotificationTypeAndTask() = runBlocking {
+        val disk = openHistoricalDatabase(2)
+        try {
+            assertEquals("Old task", disk.taskDao().allTasksForMigration().single().title)
+            assertEquals("SECURITY_EVENT", disk.taskDao().allNotificationsForMigration().single().category)
+            assertEquals("Old alert", disk.taskDao().allNotificationsForMigration().single().message)
+            assertFalse(disk.taskDao().allNotificationsForMigration().single().isAcknowledged)
+        } finally { disk.close() }
     }
 
-    // ==========================================
-    // STAGE 7: REMOTE CONNECTIVITY VALIDATION
-    // ==========================================
-
-    @Test
-    fun `test sync failure handles network exception gracefully`() = runBlocking {
-        val unreachableConfig = DesktopNodeConfig(
-            hostIp = "127.0.0.1",
-            port = 1, // Non-existent port
-            simulatedNodeEnabled = false
-        )
-        repository.updateConfig(unreachableConfig)
-
-        val syncResult = repository.triggerSync()
-        // Must return failure result cleanly without throwing an unhandled exception
-        assertFalse(syncResult.success)
-        assertEquals(ConnectionStatus.DISCONNECTED, repository.connectionStatus.value)
-    }
-
-    @Test
-    fun `test battery optimization mode switching`() {
-        val config = repository.nodeConfig.value
-        assertEquals(BatteryOptimizationMode.SMART_ECO, config.batteryMode)
-
-        repository.updateConfig(config.copy(batteryMode = BatteryOptimizationMode.REAL_TIME))
-        assertEquals(BatteryOptimizationMode.REAL_TIME, repository.nodeConfig.value.batteryMode)
-
-        repository.updateConfig(config.copy(batteryMode = BatteryOptimizationMode.MANUAL_ONLY))
-        assertEquals(BatteryOptimizationMode.MANUAL_ONLY, repository.nodeConfig.value.batteryMode)
-    }
-
-    @Test
-    fun `test model processing mode selection`() {
-        assertEquals("Local", repository.modelProcessingMode.value)
-        repository.setModelProcessingMode("Smart Hybrid")
-        assertEquals("Smart Hybrid", repository.modelProcessingMode.value)
-        repository.setModelProcessingMode("Cloud")
-        assertEquals("Cloud", repository.modelProcessingMode.value)
-        repository.setModelProcessingMode("Local Only")
-        assertEquals("Local Only", repository.modelProcessingMode.value)
+    private fun openHistoricalDatabase(version: Int): AppDatabase {
+        val name = "migration-${UUID.randomUUID()}.db"
+        diskNames += name
+        val path = context.getDatabasePath(name)
+        path.parentFile!!.mkdirs()
+        SQLiteDatabase.openOrCreateDatabase(path, null).use { old ->
+            old.execSQL("""CREATE TABLE chat_sessions (id TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,
+                createdAt INTEGER NOT NULL,lastMessagePreviewEncrypted TEXT NOT NULL,
+                lastMessageTimestamp INTEGER NOT NULL,modelUsed TEXT NOT NULL,isSynced INTEGER NOT NULL)""")
+            old.execSQL("""CREATE TABLE chat_messages (id TEXT NOT NULL PRIMARY KEY,sessionId TEXT NOT NULL,
+                sender TEXT NOT NULL,encryptedContent TEXT NOT NULL,timestamp INTEGER NOT NULL,status TEXT NOT NULL,
+                promptTokens INTEGER NOT NULL,completionTokens INTEGER NOT NULL,modelName TEXT NOT NULL,
+                attachmentName TEXT,attachmentType TEXT,attachmentDataEncrypted TEXT,attachmentSize INTEGER NOT NULL)""")
+            old.execSQL("""CREATE TABLE documents (id TEXT NOT NULL PRIMARY KEY,fileName TEXT NOT NULL,fileType TEXT NOT NULL,
+                encryptedContent TEXT NOT NULL,checksumSha256 TEXT NOT NULL,fileSizeBytes INTEGER NOT NULL,
+                updatedAt INTEGER NOT NULL,syncedWithDesktop INTEGER NOT NULL,tags TEXT NOT NULL)""")
+            val extra = if (version == 3) ",category TEXT NOT NULL,requiresApproval INTEGER NOT NULL,approvalPrompt TEXT" else ""
+            old.execSQL("""CREATE TABLE desktop_tasks (id TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,status TEXT NOT NULL,
+                progress REAL NOT NULL,modelName TEXT NOT NULL,startedAt INTEGER NOT NULL,completedAt INTEGER,resultSummary TEXT$extra)""")
+            if (version == 2) old.execSQL("""CREATE TABLE desktop_notifications (id TEXT NOT NULL PRIMARY KEY,
+                title TEXT NOT NULL,message TEXT NOT NULL,timestamp INTEGER NOT NULL,isRead INTEGER NOT NULL,type TEXT NOT NULL)""")
+            else old.execSQL("""CREATE TABLE desktop_notifications (id TEXT NOT NULL PRIMARY KEY,title TEXT NOT NULL,
+                message TEXT NOT NULL,timestamp INTEGER NOT NULL,isRead INTEGER NOT NULL,isAcknowledged INTEGER NOT NULL,
+                severity TEXT NOT NULL,category TEXT NOT NULL,requiresApproval INTEGER NOT NULL,assignedTo TEXT,relatedAction TEXT)""")
+            old.execSQL("INSERT INTO chat_sessions VALUES ('old-v$version','Old v$version title',1,'',1,'Old model',0)")
+            if (version == 2) {
+                old.execSQL("INSERT INTO desktop_tasks VALUES ('t','Old task','COMPLETED',1.0,'Old model',1,2,'Old result')")
+                old.execSQL("INSERT INTO desktop_notifications VALUES ('n','Old alert title','Old alert',1,1,'SECURITY_EVENT')")
+            }
+            old.version = version
+        }
+        return Room.databaseBuilder(context, AppDatabase::class.java, name)
+            .addMigrations(AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
     }
 }

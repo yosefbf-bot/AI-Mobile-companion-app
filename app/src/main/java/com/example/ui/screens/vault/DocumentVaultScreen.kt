@@ -48,6 +48,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import com.example.data.model.ChatAttachment
+import com.example.ui.components.*
+import org.json.JSONObject
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,15 +78,33 @@ fun DocumentVaultScreen(
     onSaveDocument: (String, String, String, String) -> Unit,
     onDeleteDocument: (String) -> Unit,
     onSendDocToChat: ((String, String) -> Unit)? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSaveEvidence: ((ChatAttachment) -> Unit)? = null,
+    onPickEvidence: ((String) -> Unit)? = null, onTakePhoto: (() -> Unit)? = null,
+    incomingEvidence: ChatAttachment? = null, onConsumeEvidence: () -> Unit = {},
+    loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
+    lastSavedCaptureId: String? = null
 ) {
     val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var selectedDocForView by remember { mutableStateOf<EncryptedDocument?>(null) }
 
-    var newDocTitle by remember { mutableStateOf("") }
+    val restored = remember { unsentForm(loadUnsentDraft()) }
+    var newDocTitle by remember { mutableStateOf(restored.optString("title")) }
     var newDocType by remember { mutableStateOf("MARKDOWN") }
-    var newDocContent by remember { mutableStateOf("") }
+    var newDocContent by remember { mutableStateOf(restored.optString("content")) }
+    var evidence by remember { mutableStateOf(formAttachment(restored)) }
+    var submittedEvidence by remember { mutableStateOf<Pair<ChatAttachment,String?>?>(null) }
+    LaunchedEffect(lastSavedCaptureId) {
+        submittedEvidence?.let { (saved, priorId) ->
+            if (lastSavedCaptureId != null && lastSavedCaptureId != priorId) {
+                if (evidence == saved) evidence = null
+                submittedEvidence = null
+            }
+        }
+    }
+    LaunchedEffect(incomingEvidence) { incomingEvidence?.let { evidence = it; onConsumeEvidence() } }
+    LaunchedEffect(newDocTitle,newDocContent,evidence) { onUnsentDraftChange(JSONObject().put("title",newDocTitle).put("content",newDocContent).put("evidence",attachmentForm(evidence)).toString()) }
     var newDocTags by remember { mutableStateOf("Confidential, Clinical Report") }
 
     // File picker launcher
@@ -92,13 +114,7 @@ fun DocumentVaultScreen(
         if (uri != null) {
             val attachment = AttachmentUtils.uriToChatAttachment(context, uri)
             if (attachment != null) {
-                onSaveDocument(
-                    attachment.name,
-                    attachment.type,
-                    "Attached File: ${attachment.name} (${attachment.sizeBytes / 1024} KB). Uploaded to Windows Private AI.",
-                    "Uploaded, Mobile Companion"
-                )
-                Toast.makeText(context, "Uploaded '${attachment.name}' to Private AI", Toast.LENGTH_SHORT).show()
+                evidence = attachment
             }
         }
     }
@@ -147,7 +163,7 @@ fun DocumentVaultScreen(
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Windows Private AI is the permanent storage and processor. No permanent PHI is cached on Android.",
+                            text = "Notes and pending evidence are stored encrypted on this phone. Desktop upload is confirmed only by a receipt.",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 11.sp
@@ -165,26 +181,34 @@ fun DocumentVaultScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = { filePickerLauncher.launch("*/*") },
+                    onClick = { onPickEvidence?.invoke("*/*") ?: filePickerLauncher.launch("*/*") },
                     colors = ButtonDefaults.buttonColors(containerColor = CyberTeal),
                     modifier = Modifier.weight(1f).testTag("upload_file_button")
                 ) {
                     Icon(imageVector = Icons.Default.FileUpload, contentDescription = "Upload", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Upload File / PDF", fontSize = 12.sp)
+                    Text("Choose File / PDF", fontSize = 12.sp)
                 }
 
                 OutlinedButton(
-                    onClick = { filePickerLauncher.launch("image/*") },
+                    onClick = { onPickEvidence?.invoke("image/*") ?: filePickerLauncher.launch("image/*") },
                     modifier = Modifier.weight(1f).testTag("upload_photo_button")
                 ) {
                     Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = "Photo", modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Upload Photo", fontSize = 12.sp)
+                    Text("Choose Photo", fontSize = 12.sp)
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
+
+            evidence?.let { file ->
+                Text("Selected evidence: ${file.name}. Photos are not interpreted by the text model.")
+                Row {
+                    Button(onClick = { submittedEvidence = file to lastSavedCaptureId; onSaveEvidence?.invoke(file) }, enabled = onSaveEvidence != null && submittedEvidence == null) { Text("Save for desktop review") }
+                    TextButton(onClick = { evidence = null }) { Text("Remove") }
+                }
+            }
 
             Text(
                 text = "Reports & Files (${documents.size})",
@@ -216,7 +240,7 @@ fun DocumentVaultScreen(
                             onClick = { selectedDocForView = doc },
                             onDelete = { onDeleteDocument(doc.id) },
                             onShare = {
-                                val decrypted = decryptText(doc.encryptedContent)
+                                val decrypted = vaultDocumentShareText(doc, decryptText(doc.encryptedContent))
                                 shareDocument(context, doc.fileName, decrypted)
                             }
                         )
@@ -240,9 +264,8 @@ fun DocumentVaultScreen(
 
     // View Document Dialog with Android Share & Send to Chat
     selectedDocForView?.let { doc ->
-        val decryptedText = remember(doc.encryptedContent) {
-            decryptText(doc.encryptedContent)
-        }
+        val originalText = remember(doc.encryptedContent) { decryptText(doc.encryptedContent) }
+        val decryptedText = remember(doc,originalText) { vaultDocumentPreview(doc, originalText) }
 
         AlertDialog(
             onDismissRequest = { selectedDocForView = null },
@@ -265,13 +288,13 @@ fun DocumentVaultScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.CheckCircle,
-                                    contentDescription = "Verified",
+                                    contentDescription = "Stored checksum",
                                     tint = CyberTeal,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "SHA-256 Verified Local Ledger",
+                                    text = "Stored content checksum",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold,
                                         color = CyberTeal
@@ -292,7 +315,7 @@ fun DocumentVaultScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
-                        text = "Decrypted Output:",
+                        text = "Protected note preview:",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
 
@@ -320,12 +343,15 @@ fun DocumentVaultScreen(
             },
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onSendDocToChat != null && !doc.fileType.startsWith("CAPTURE_")) {
+                        TextButton(onClick = { onSendDocToChat(doc.fileName, vaultDocumentChatPreview(originalText)); selectedDocForView = null }) { Text("Send preview to chat") }
+                    }
                     OutlinedButton(onClick = {
-                        shareDocument(context, doc.fileName, decryptedText)
+                        shareDocument(context, doc.fileName, vaultDocumentShareText(doc,originalText))
                     }) {
                         Icon(imageVector = Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Share")
+                        Text(if (doc.fileType.startsWith("CAPTURE_")) "Share note summary" else "Share original")
                     }
                     Button(onClick = { selectedDocForView = null }) {
                         Text("Close")
@@ -343,7 +369,7 @@ fun DocumentVaultScreen(
             text = {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "Document will be encrypted with AES-256-GCM locally and synced securely to your workstation node.",
+                        text = "This note is encrypted and saved on this phone. Send it to chat or capture it for desktop review when you choose.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -467,6 +493,11 @@ fun DocumentItemCard(
 }
 
 fun shareDocument(context: Context, title: String, content: String) {
+    // Android's cross-process Intent transport is bounded; do not crash or truncate a full export.
+    if (content.length > 200000) {
+        Toast.makeText(context, "This document is too large for direct text sharing. Its complete protected original is retained; export it on the PC or share smaller sections.", Toast.LENGTH_LONG).show()
+        return
+    }
     val sendIntent = Intent().apply {
         action = Intent.ACTION_SEND
         putExtra(Intent.EXTRA_TEXT, content)
@@ -474,5 +505,6 @@ fun shareDocument(context: Context, title: String, content: String) {
         type = "text/plain"
     }
     val shareIntent = Intent.createChooser(sendIntent, "Share $title via")
-    context.startActivity(shareIntent)
+    try { context.startActivity(shareIntent) }
+    catch (_: Exception) { Toast.makeText(context,"A share app could not be opened. The protected original is retained.",Toast.LENGTH_LONG).show() }
 }

@@ -95,9 +95,9 @@ fun SyncBanner(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text(
                     text = when (batteryMode) {
-                        BatteryOptimizationMode.SMART_ECO -> "Smart Eco • ~0.08% / hr"
-                        BatteryOptimizationMode.REAL_TIME -> "Active Stream • Low Wake"
-                        BatteryOptimizationMode.MANUAL_ONLY -> "Manual • 0% Idle"
+                        BatteryOptimizationMode.SMART_ECO -> "Check every five minutes while unlocked"
+                        BatteryOptimizationMode.REAL_TIME -> "Check every 30 seconds while unlocked"
+                        BatteryOptimizationMode.MANUAL_ONLY -> "Manual checks"
                     },
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontSize = 10.sp,
@@ -128,6 +128,7 @@ fun SyncBanner(
 }
 
 private fun formatRelativeTime(timestamp: Long): String {
+    if (timestamp <= 0) return "Not yet checked"
     val diff = System.currentTimeMillis() - timestamp
     return when {
         diff < 15_000 -> "Just now"

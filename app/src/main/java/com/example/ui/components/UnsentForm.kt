@@ -1,0 +1,13 @@
+package com.example.ui.components
+
+import com.example.data.model.ChatAttachment
+import org.json.JSONObject
+
+/** Callers store this serialization only in the ViewModel's encrypted RAM draft cache. */
+internal fun unsentForm(value: String): JSONObject = try { JSONObject(value) } catch (_: Exception) { JSONObject() }
+internal fun attachmentForm(file: ChatAttachment?): Any = file?.let {
+    JSONObject().put("name",it.name).put("type",it.type).put("data",it.base64Data).put("bytes",it.sizeBytes)
+} ?: JSONObject.NULL
+internal fun formAttachment(value: JSONObject): ChatAttachment? = value.optJSONObject("evidence")?.let {
+    ChatAttachment(it.getString("name"),it.getString("type"),it.getString("data"),it.getLong("bytes"))
+}

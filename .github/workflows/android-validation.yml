@@ -1,0 +1,70 @@
+name: Android validation
+on:
+  pull_request:
+  push:
+    branches: [main, "chatgpt/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-test-device:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Verify wrapper and prepare SDK
+        run: |
+          echo "b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          chmod +x gradlew
+          (yes || true) | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36.1" "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-34;google_apis;x86_64"
+      - name: Build and run regression tests and lint
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug assembleDebugAndroidTest
+      - name: Start isolated Android emulator
+        run: |
+          sudo chmod a+rw /dev/kvm
+          echo no | avdmanager create avd -n privateai_api34 -k "system-images;android-34;google_apis;x86_64" --force
+          nohup emulator -avd privateai_api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 2048 >"$RUNNER_TEMP/privateai-emulator.log" 2>&1 &
+          adb wait-for-device
+          for attempt in $(seq 1 60); do
+            if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; then break; fi
+            sleep 3
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          adb shell input keyevent 82
+          # This PIN belongs only to this disposable, account-free CI emulator.
+          adb shell locksettings set-pin 846219
+      - name: Run actual Android lock and startup acceptance
+        run: ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.privateai.test.devicePin=846219
+      - name: Capture disposable emulator failure evidence
+        if: failure()
+        run: |
+          if adb get-state >/dev/null 2>&1; then
+            mkdir -p app/build/reports/ci-emulator
+            adb exec-out screencap -p >app/build/reports/ci-emulator/screen.png || true
+            adb shell uiautomator dump /sdcard/privateai-ci-window.xml >/dev/null 2>&1 || true
+            adb pull /sdcard/privateai-ci-window.xml app/build/reports/ci-emulator/window.xml >/dev/null 2>&1 || true
+            adb logcat -d -t 1200 >app/build/reports/ci-emulator/logcat.txt || true
+          fi
+      - name: Hash debug candidate
+        if: success()
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk >app/build/outputs/apk/debug/SHA256SUMS.txt
+      - name: Upload exact-run candidate and validation reports
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: android-validation-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/debug/
+            app/build/reports/
+            app/build/test-results/
+            app/build/outputs/androidTest-results/
+          retention-days: 14
+          if-no-files-found: warn

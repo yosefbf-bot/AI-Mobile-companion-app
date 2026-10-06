@@ -13,6 +13,7 @@ data class EncryptedDocument(
     val checksumSha256: String,
     val fileSizeBytes: Long,
     val updatedAt: Long = System.currentTimeMillis(),
-    val syncedWithDesktop: Boolean = true,
-    val tags: String = "Confidential, AI-Processed"
+    val syncedWithDesktop: Boolean = false,
+    val tags: String = "",
+    val storageVersion: Int = 0
 )

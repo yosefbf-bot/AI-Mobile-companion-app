@@ -28,12 +28,13 @@ class ExampleRobolectricTest {
     @Test
     fun `test aes256 encryption and decryption roundtrip`() {
         val originalText = "Top secret prompt: Train local model on private patient data."
-        val encrypted = EncryptionManager.encrypt(originalText)
+        val cipher = TestVaultCipher()
+        val encrypted = cipher.encrypt(originalText)
 
         assertNotEquals(originalText, encrypted)
         assertTrue(encrypted.isNotBlank())
 
-        val decrypted = EncryptionManager.decrypt(encrypted)
+        val decrypted = cipher.decrypt(encrypted)
         assertEquals(originalText, decrypted)
     }
 

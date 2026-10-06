@@ -1,9 +1,6 @@
 package com.example.ui.screens.chats
 
-import android.app.Activity
-import android.content.Intent
 import android.graphics.Bitmap
-import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -65,6 +62,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import com.example.ui.components.*
+import org.json.JSONObject
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -107,7 +106,11 @@ fun ChatDetailScreen(
     onSendMessage: (String, ChatAttachment?) -> Unit,
     onStopStreaming: () -> Unit,
     onBackClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onPickEvidence: ((String) -> Unit)? = null, onTakePhoto: (() -> Unit)? = null,
+    incomingEvidence: ChatAttachment? = null, onConsumeEvidence: () -> Unit = {},
+    loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
+    isRequestRunning: Boolean = false
 ) {
     BackHandler {
         onBackClick()
@@ -115,27 +118,27 @@ fun ChatDetailScreen(
 
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    var messageInput by remember { mutableStateOf("") }
-    var currentAttachment by remember { mutableStateOf<ChatAttachment?>(null) }
+    val restored = remember(session?.id) { unsentForm(loadUnsentDraft()) }
+    var messageInput by remember(session?.id) { mutableStateOf(restored.optString("text")) }
+    var currentAttachment by remember(session?.id) { mutableStateOf(formAttachment(restored)) }
+    LaunchedEffect(messageInput,currentAttachment) { onUnsentDraftChange(JSONObject().put("text",messageInput).put("evidence",attachmentForm(currentAttachment)).toString()) }
+    LaunchedEffect(incomingEvidence) { incomingEvidence?.let { currentAttachment = it; onConsumeEvidence() } }
     var showAttachmentSheet by remember { mutableStateOf(false) }
     var showModeDropdown by remember { mutableStateOf(false) }
-    var isStreaming by remember { mutableStateOf(false) }
-
-    val listState = rememberLazyListState()
-
-    // Android Native Speech Recognizer Launcher
-    val speechLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val spokenText: ArrayList<String>? =
-                result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            val text = spokenText?.firstOrNull()
-            if (!text.isNullOrBlank()) {
-                messageInput = if (messageInput.isBlank()) text else "$messageInput $text"
+    val isStreaming = isRequestRunning
+    var pendingSubmission by remember { mutableStateOf<Pair<String, Set<String>>?>(null) }
+    LaunchedEffect(messages) {
+        pendingSubmission?.let { (text, priorIds) ->
+            if (messages.any { it.id !in priorIds && it.sender == "user" && decryptText(it.encryptedContent) == text }) {
+                if (messageInput.trim() == text) messageInput = ""
+                pendingSubmission = null
             }
         }
     }
+
+    val listState = rememberLazyListState()
+
+    val dictate = rememberOnDeviceDictation { messageInput = if (messageInput.isBlank()) it else "$messageInput $it" }
 
     // 1. Camera Picture Launcher
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -190,7 +193,7 @@ fun ChatDetailScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "AES-256-GCM Direct Channel",
+                                text = "Encrypted phone storage · paired HTTPS",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -228,30 +231,9 @@ fun ChatDetailScreen(
                             modifier = Modifier.height(28.dp).testTag("model_mode_chip")
                         )
 
-                        DropdownMenu(
-                            expanded = showModeDropdown,
-                            onDismissRequest = { showModeDropdown = false }
-                        ) {
-                            listOf("Local", "Smart Hybrid", "Cloud", "Local Only").forEach { mode ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(mode, fontWeight = FontWeight.Bold)
-                                            val desc = when (mode) {
-                                                "Local" -> "Inference 100% on workstation GPU"
-                                                "Smart Hybrid" -> "Private AI routes between local & external"
-                                                "Cloud" -> "Workstation proxies to secure cloud runtime"
-                                                else -> "Strict airgapped local execution"
-                                            }
-                                            Text(desc, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        onModelModeChange(mode)
-                                        showModeDropdown = false
-                                    }
-                                )
-                            }
+                        DropdownMenu(expanded = showModeDropdown, onDismissRequest = { showModeDropdown = false }) {
+                            DropdownMenuItem(text = { Text("Processing is configured on the PC. Clinical privacy requests local-only HIPAA-mode chat.") },
+                                onClick = { showModeDropdown = false })
                         }
                     }
 
@@ -391,17 +373,7 @@ fun ChatDetailScreen(
 
                     // Native Speech Input Button
                     IconButton(
-                        onClick = {
-                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak prompt for Private AI...")
-                            }
-                            try {
-                                speechLauncher.launch(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Voice input not available on this device", Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onClick = dictate,
                         modifier = Modifier
                             .size(44.dp)
                             .testTag("voice_input_button")
@@ -438,7 +410,6 @@ fun ChatDetailScreen(
                         // Stop Generation Button
                         IconButton(
                             onClick = {
-                                isStreaming = false
                                 onStopStreaming()
                             },
                             colors = IconButtonDefaults.filledIconButtonColors(
@@ -458,12 +429,10 @@ fun ChatDetailScreen(
                             onClick = {
                                 if (canSend) {
                                     val prompt = messageInput.trim().ifBlank {
-                                        if (currentAttachment?.type == "IMAGE") "Analyze this image and describe key details"
-                                        else "Process this attachment and extract main insights"
+                                        "Evidence supplied for human review. Image contents were not interpreted."
                                     }
+                                    if (currentAttachment == null) pendingSubmission = prompt to messages.map { it.id }.toSet()
                                     onSendMessage(prompt, currentAttachment)
-                                    messageInput = ""
-                                    currentAttachment = null
                                 }
                             },
                             enabled = canSend,
@@ -676,7 +645,12 @@ fun ChatDetailScreen(
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                            text = if (isUser) "Synced" else "${msg.promptTokens + msg.completionTokens} tokens",
+                                            text = when (msg.status) {
+                                                "SYNCED_DESKTOP" -> if (isUser) "Desktop acknowledged" else "Desktop reply"
+                                                "REVIEW_REQUIRED" -> "Review required — not delivered"
+                                                "DEMO" -> "Demo only"
+                                                else -> "Pending or unverified delivery"
+                                            },
                                             style = MaterialTheme.typography.labelSmall.copy(
                                                 fontSize = 10.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -710,7 +684,7 @@ fun ChatDetailScreen(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Files and pictures are end-to-end encrypted locally and processed by your desktop AI node.",
+                    text = "Evidence is protected on this phone and transferred over paired HTTPS for human review. The text model does not interpret photos.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -721,10 +695,10 @@ fun ChatDetailScreen(
                 AttachmentOptionRow(
                     icon = Icons.Default.CameraAlt,
                     title = "Take Picture",
-                    subtitle = "Capture photo with camera to analyze or attach",
+                    subtitle = "Capture a preview photo as evidence for review",
                     onClick = {
                         showAttachmentSheet = false
-                        cameraLauncher.launch(null)
+                        onTakePhoto?.invoke() ?: cameraLauncher.launch(null)
                     },
                     testTag = "attachment_option_camera"
                 )
@@ -738,7 +712,7 @@ fun ChatDetailScreen(
                     subtitle = "Select screenshots, diagrams, or photos via photo picker",
                     onClick = {
                         showAttachmentSheet = false
-                        photoPickerLauncher.launch(
+                        onPickEvidence?.invoke("image/*") ?: photoPickerLauncher.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                         )
                     },
@@ -751,10 +725,10 @@ fun ChatDetailScreen(
                 AttachmentOptionRow(
                     icon = Icons.Default.Description,
                     title = "Attach Document, PDF or Code",
-                    subtitle = "Select PDF, text, JSON, or code file for desktop ingestion",
+                    subtitle = "JPEG, PNG, PDF or TXT evidence, up to 5 MiB",
                     onClick = {
                         showAttachmentSheet = false
-                        documentPickerLauncher.launch("*/*")
+                        onPickEvidence?.invoke("*/*") ?: documentPickerLauncher.launch("*/*")
                     },
                     testTag = "attachment_option_file"
                 )
