@@ -15,6 +15,21 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Reserve disposable hosted-runner disk for Android
+        run: |
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          df -h "$RUNNER_TEMP"
+          # This Android job uses neither .NET nor CodeQL. Never run this on a user machine.
+          for tool_dir in /usr/share/dotnet /opt/hostedtoolcache/CodeQL; do
+            if [ -d "$tool_dir" ]; then
+              resolved_tool="$(readlink -f "$tool_dir")"
+              test "$resolved_tool" = "$tool_dir"
+              du -sh "$resolved_tool"
+              sudo rm -rf -- "$resolved_tool"
+            fi
+          done
+          df -h "$RUNNER_TEMP"
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
@@ -38,6 +53,9 @@ jobs:
       - name: Start isolated Android emulator
         run: |
           sudo chmod a+rw /dev/kvm
+          df -h "$RUNNER_TEMP"
+          available_bytes="$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' ')"
+          test "$available_bytes" -ge 8589934592
           # Both SDK creation and emulator launch must resolve the same disposable AVD.
           export ANDROID_USER_HOME="$RUNNER_TEMP/privateai-android-user"
           export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"

@@ -57,6 +57,15 @@ claimed. The disposable AVD now explicitly uses a 2 GiB userdata partition and
 the documented 2,048 MB emulator partition option. No phone/app data is deleted
 or resized; this changes only the newly created, account-free CI test device.
 
+Source `9249dac` correctly applied that setting but both hosted runs still
+reported the same 7,372.80 MB image minimum and failed before device execution.
+The workflow therefore reserves space by removing only unused preinstalled
+`.NET` and `CodeQL` toolchains from an explicitly verified **GitHub-hosted Linux
+runner**, checking each resolved absolute target first. This does not run on the
+PC, phone or a self-hosted runner, and does not remove source, Android tools,
+signing material or user data. Disk availability is logged and checked before
+boot; all OS-authentication and Keystore assertions remain required.
+
 - Real Android OS authentication successfully unlocks an existing/new Keystore vault; cancellation, lock, backgrounding, and five-minute expiry close it.
 - Existing v2/v3 vault upgrades preserve data, migrate the retired encryption, label old synthetic/unverified caches, and retain any unpaired queue for review. Corruption/unsupported schemas must preserve the original database.
 - External photo/file selection survives the authentication gate, restores the encrypted unsent draft, and remains an unsent preview until explicitly submitted. Pairing changes must not redirect pending evidence.
