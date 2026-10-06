@@ -70,6 +70,15 @@ desktop HTTPS interoperability; lint passed with zero errors and 72 warnings.
 The frozen-source app/test APK build passed, and the app signature was verified.
 The production input digest remained unchanged throughout the build. Artifact
 hashes and the development signing certificate are recorded in that report.
+Hosted emulator acceptance also actually passed on source `a646614`, push run
+`37399341176`: all four instrumented cases executed with zero skips, failures or
+errors. This includes the real Android OS PIN prompt, authenticated Keystore
+encrypt/decrypt, an unpaired dashboard/Notes workspace and relock/read rejection.
+Hosted unit results are 44 passed plus one explicitly skipped external desktop
+fixture case; the local fixture-enabled suite above passed all 45. Hosted lint
+has zero errors and 74 warnings. The CI APK has a different development signer/
+hash from the local exported APK; this establishes source behavior, not execution
+of that local APK on a physical phone. See the exact run and validation report.
 The real interoperability test requires `PRIVATE_AI_GATEWAY_TEST_PAIR_FILE`, an
 ignored JSON fixture with `pairUri`; it explicitly skips without it. Never print
 or commit that fixture or use a real account/PHI. The Windows local test used a
@@ -84,7 +93,8 @@ gradlew.bat --no-daemon testDebugUnitTest lintDebug assembleDebug assembleDebugA
 
 Inspect actual XML counts, lint reports and artifact hashes. GitHub workflow
 `android-validation.yml` runs real OS-credential/Keystore tests on an account-free
-disposable emulator; compilation alone does not prove those tests ran. Physical
+disposable emulator; the four-case execution above is recorded separately from
+compilation. Physical
 phone, real LAN, existing signed-install upgrade, camera, local microphone,
 notification delivery, live WhatsApp/mailbox and clinical acceptance remain separate.
 No full AI generation is promised to continue while the phone is locked; foreground

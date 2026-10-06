@@ -63,7 +63,7 @@ jobs:
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd -n privateai_api34 -k "system-images;android-34;google_apis;x86_64" -p "$ANDROID_AVD_HOME/privateai_api34.avd" --force
           test -f "$ANDROID_AVD_HOME/privateai_api34.ini"
-          # A 2 GiB disposable userdata partition fits the hosted runner; no user data exists here.
+          # Request bounded userdata; the system image's larger minimum still needs reserved disk.
           sed -i '/^disk.dataPartition.size=/d' "$ANDROID_AVD_HOME/privateai_api34.avd/config.ini"
           printf '\ndisk.dataPartition.size=2G\n' >> "$ANDROID_AVD_HOME/privateai_api34.avd/config.ini"
           grep -Fx disk.dataPartition.size=2G "$ANDROID_AVD_HOME/privateai_api34.avd/config.ini"

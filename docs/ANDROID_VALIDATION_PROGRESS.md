@@ -31,7 +31,37 @@ Set `JAVA_HOME`, `ANDROID_HOME`, `ANDROID_USER_HOME`, and `GRADLE_USER_HOME` to 
 
 The local final build is finished, and no owned Java build process remains. Do not repeat the completed local suite without a new source change or a specific unresolved concern. The `PRIVATE_AI_GATEWAY_TEST_PAIR_FILE` environment variable used an ignored synthetic desktop fixture created by the parent task. Do not print or publish that file. For a new interoperability run the desktop test server must be running; create a new isolated fixture rather than using a real account if necessary.
 
-The remaining automated acceptance is the GitHub workflow's isolated Android emulator lock/startup and successful OS-credential/Keystore tests. Its known PIN exists only on the disposable CI emulator, with no production bypass. It uploads reports and captures failure evidence from that emulator. Initial published head `56e6796` run `37393737660` failed before building or testing because `sdkmanager` was not on the hosted runner's PATH (exit 127); all build and device checks were skipped. The workflow now explicitly prepares pinned Android command-line tools and exports the installed emulator directory. This CI-only fix does not change the APK's production input digest. Inspect the review PR's exact new head for the executed result; no emulator pass is inferred from the repair. The actual desktop interoperability test deliberately skips in CI when its isolated desktop fixture is absent; the local final run executed it, with no skipped tests. No physical Android device was attached during local validation.
+The GitHub workflow's isolated Android emulator acceptance has now executed successfully; see the October 6 result below. Its known PIN exists only on the disposable CI emulator, with no production bypass. It uploads reports and captures failure evidence from that emulator. Initial published head `56e6796` run `37393737660` failed before building or testing because `sdkmanager` was not on the hosted runner's PATH (exit 127); all build and device checks were skipped. The workflow now explicitly prepares pinned Android command-line tools and exports the installed emulator directory. This CI-only fix does not change the APK's production input digest. The actual desktop interoperability test deliberately skips in CI when its isolated desktop fixture is absent; the local final run executed it, with no skipped tests. No physical Android device was attached during local validation.
+
+## Executed hosted Android acceptance on October 6, 2026
+
+[Exact source `a646614` push run `37399341176`](https://github.com/yosefbf-bot/AI-Mobile-companion-app/actions/runs/37399341176)
+completed **SUCCESS**. The actual instrumented XML in artifact `11385260961`
+reports **4 tests passed**, zero failures, errors or skips:
+
+- `useAppContext`
+- `arbitraryPinAndMissingOsAuthenticationCannotReadTheVaultOnAndroid`
+- `startupKeepsSensitiveNavigationUncomposedBehindDeviceAuthentication`
+- `actualOsCredentialUnlocksKeystoreAndUnpairedWorkspaceThenRelocks`
+
+The positive case drove Android's real device-credential prompt, confirmed a
+secure device and authenticated Keystore encryption/decryption, opened the
+unpaired dashboard and Notes screen, then relocked and rejected vault reads.
+This verifies source behavior on the disposable API 34 emulator. It does not
+establish physical-phone hardware, existing signed-install upgrade, camera,
+microphone, background notification delivery, real LAN, live accounts or clinical
+acceptance. No account or clinical records were used.
+
+Hosted unit XML has **44 passed, one environment-gated desktop-fixture skip**,
+zero failures/errors. Hosted lint has **0 errors, 74 warnings**. The local run
+above executed that external-fixture case and passed all 45 with no skips.
+The hosted debug APK SHA-256 is
+`952950660ab8900230f37fb25af082173412a65e9575cbf966dbfa806ebc8397`.
+It is a separately signed CI build, not the local exported APK with SHA-256
+`6d684203f74a7558a8f39aa2a00a74a3c97cbbcd1760c811f1bb5e9a6a4fa82e`.
+Their production source inputs remain unchanged. Documentation/CI comments after
+this source checkpoint require their own exact-head status check; do not infer
+new physical or binary execution from these results.
 
 ## Required acceptance still distinct from compiler/unit tests
 
