@@ -118,7 +118,7 @@ fun TasksScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "$runningCount active • $approvalCount requiring approval",
+                            text = "Cached: $runningCount running • $approvalCount awaiting approval",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = if (approvalCount > 0) StatusAmber else CyberTeal,
                                 fontWeight = FontWeight.SemiBold
@@ -155,6 +155,9 @@ fun TasksScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            Text("Cached desktop report metadata. Live agent launch, approvals and report controls require the PC; the phone does not expose them. Demo examples use a separate workspace.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             // Filter chips
             Row(
                 modifier = Modifier
@@ -208,7 +211,7 @@ fun TasksScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Use the '+' button to dispatch an agent or start a saved playbook on Windows host.",
+                            text = "Refresh to check permitted report-job metadata. Run agents and playbooks on the PC; the '+' launcher provides isolated examples only in Demo.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -344,7 +347,7 @@ fun TasksScreen(
                     }
 
                     Text(
-                        text = "Started: ${SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(task.startedAt))}",
+                        text = "Started: ${if (task.startedAt > 0) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(task.startedAt)) else "Not provided"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -406,7 +409,7 @@ fun TaskCard(
                 }
 
                 Text(
-                    text = "${(task.progress * 100).toInt()}%",
+                    text = if (task.category == "REPORT") "Progress unknown" else "${(task.progress * 100).toInt()}%",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, color = CyberTeal)
                 )
             }
@@ -426,7 +429,7 @@ fun TaskCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (task.status == "RUNNING") {
+            if (task.status == "RUNNING" && task.category != "REPORT") {
                 LinearProgressIndicator(
                     progress = { task.progress },
                     modifier = Modifier

@@ -5,12 +5,32 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import androidx.room.Transaction
 import com.example.data.local.entity.DesktopNotification
 import com.example.data.local.entity.DesktopTask
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TaskDao {
+    @Query("SELECT * FROM desktop_tasks")
+    suspend fun allTasksForMigration(): List<DesktopTask>
+
+    @Query("SELECT * FROM desktop_notifications")
+    suspend fun allNotificationsForMigration(): List<DesktopNotification>
+
+    @Query("SELECT * FROM desktop_notifications WHERE id = :id")
+    suspend fun notificationById(id: String): DesktopNotification?
+
+    @Transaction
+    suspend fun mergeNotificationsPreservingLocalState(rows: List<DesktopNotification>) {
+        for (row in rows) {
+            val previous = notificationById(row.id)
+            insertNotification(row.copy(
+                isRead = previous?.isRead == true || row.isRead,
+                isAcknowledged = previous?.isAcknowledged == true || row.isAcknowledged
+            ))
+        }
+    }
 
     @Query("SELECT * FROM desktop_tasks ORDER BY startedAt DESC")
     fun getAllTasks(): Flow<List<DesktopTask>>

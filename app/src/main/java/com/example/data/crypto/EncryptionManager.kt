@@ -1,109 +1,91 @@
 package com.example.data.crypto
 
-import android.util.Base64
+import android.app.KeyguardManager
+import android.content.Context
+import android.os.Build
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import java.security.KeyStore
 import java.security.MessageDigest
-import java.security.SecureRandom
-import javax.crypto.Cipher
+import java.util.concurrent.atomic.AtomicLong
+import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.GCMParameterSpec
-import javax.crypto.spec.PBEKeySpec
-import javax.crypto.spec.SecretKeySpec
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
-object EncryptionManager {
+interface VaultCipher {
+    fun encrypt(plaintext: String): String
+    fun decrypt(encryptedPayload: String): String
+}
 
-    private const val ALGORITHM = "AES/GCM/NoPadding"
-    private const val TAG_LENGTH_BIT = 128
-    private const val IV_LENGTH_BYTE = 12
-    private const val SALT = "PrivateAI_E2EE_LocalVault_Salt_v1"
-    private const val ITERATIONS = 10000
-    private const val KEY_LENGTH = 256
+class VaultUnavailableException(cause: Throwable? = null) :
+    IllegalStateException("Vault unavailable. Unlock with the device screen lock or biometrics.", cause)
 
-    // Default master passphrase can be customized by the user in settings
-    private var cachedKey: SecretKey? = null
-    private var currentPassphrase = "PrivateAI-MasterSecret-Key-2026"
+/** Keys never leave Android Keystore. A UI lock also revokes application access. */
+object EncryptionManager : VaultCipher {
+    private const val KEY_ALIAS = "private_ai_vault_v2"
+    private const val AUTH_SECONDS = 300
+    @Volatile private var applicationContext: Context? = null
+    private val access = MutableStateFlow(false)
+    private val generation = AtomicLong()
+    val isUnlocked: StateFlow<Boolean> = access.asStateFlow()
+    val accessGeneration: Long get() = generation.get()
 
-    init {
-        deriveKey(currentPassphrase)
+    fun initialize(context: Context) { applicationContext = context.applicationContext }
+    @Synchronized fun lock() { generation.incrementAndGet(); access.value = false }
+
+    @Synchronized
+    fun unlockAfterDeviceAuthentication() {
+        lock()
+        try {
+            val context = applicationContext ?: throw VaultUnavailableException()
+            val keyguard = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            if (!keyguard.isDeviceSecure) throw VaultUnavailableException()
+            val key = key(create = true)
+            // The OS-authenticated key must work, not just a successful UI callback.
+            VaultCodec.encrypt("device authentication check", key)
+            generation.incrementAndGet()
+            access.value = true
+        } catch (e: Exception) { throw VaultUnavailableException(e) }
     }
 
-    fun setMasterPassphrase(passphrase: String) {
-        currentPassphrase = passphrase
-        deriveKey(passphrase)
-    }
-
-    private fun deriveKey(passphrase: String) {
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        val spec = PBEKeySpec(passphrase.toCharArray(), SALT.toByteArray(), ITERATIONS, KEY_LENGTH)
-        val tmp = factory.generateSecret(spec)
-        cachedKey = SecretKeySpec(tmp.encoded, "AES")
-    }
-
-    /**
-     * Encrypts plaintext using AES-256-GCM.
-     * Output format: Base64(iv + ciphertext + tag)
-     */
-    fun encrypt(plaintext: String): String {
-        return try {
-            val key = cachedKey ?: throw IllegalStateException("Key not derived")
-            val iv = ByteArray(IV_LENGTH_BYTE)
-            SecureRandom().nextBytes(iv)
-
-            val cipher = Cipher.getInstance(ALGORITHM)
-            val parameterSpec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-            cipher.init(Cipher.ENCRYPT_MODE, key, parameterSpec)
-
-            val ciphertext = cipher.doFinal(plaintext.toByteArray(Charsets.UTF_8))
-            val combined = ByteArray(iv.size + ciphertext.size)
-            System.arraycopy(iv, 0, combined, 0, iv.size)
-            System.arraycopy(ciphertext, 0, combined, iv.size, ciphertext.size)
-
-            Base64.encodeToString(combined, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            // Fallback gracefully if crypto fails
-            "ENC:$plaintext"
-        }
-    }
-
-    /**
-     * Decrypts AES-256-GCM encrypted Base64 string.
-     */
-    fun decrypt(encryptedPayload: String): String {
-        if (encryptedPayload.startsWith("ENC:")) {
-            return encryptedPayload.removePrefix("ENC:")
-        }
-        return try {
-            val key = cachedKey ?: throw IllegalStateException("Key not derived")
-            val combined = Base64.decode(encryptedPayload, Base64.NO_WRAP)
-            if (combined.size < IV_LENGTH_BYTE) {
-                return encryptedPayload
+    private fun key(create: Boolean = false): SecretKey {
+        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        if (!store.containsAlias(KEY_ALIAS)) {
+            if (!create) throw VaultUnavailableException()
+            val builder = KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .setUserAuthenticationRequired(true)
+            if (Build.VERSION.SDK_INT >= 30) {
+                builder.setUserAuthenticationParameters(AUTH_SECONDS,
+                    KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
+            } else {
+                @Suppress("DEPRECATION")
+                builder.setUserAuthenticationValidityDurationSeconds(AUTH_SECONDS)
             }
+            KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+                init(builder.build())
+            }.generateKey()
+        }
+        // Never silently replace an invalidated/lost key and discard existing records.
+        return store.getKey(KEY_ALIAS, null) as? SecretKey ?: throw VaultUnavailableException()
+    }
 
-            val iv = ByteArray(IV_LENGTH_BYTE)
-            System.arraycopy(combined, 0, iv, 0, IV_LENGTH_BYTE)
+    override fun encrypt(plaintext: String): String = useKey { VaultCodec.encrypt(plaintext, it) }
+    override fun decrypt(encryptedPayload: String): String = useKey { VaultCodec.decrypt(encryptedPayload, it) }
 
-            val ciphertextLength = combined.size - IV_LENGTH_BYTE
-            val ciphertext = ByteArray(ciphertextLength)
-            System.arraycopy(combined, IV_LENGTH_BYTE, ciphertext, 0, ciphertextLength)
-
-            val cipher = Cipher.getInstance(ALGORITHM)
-            val parameterSpec = GCMParameterSpec(TAG_LENGTH_BIT, iv)
-            cipher.init(Cipher.DECRYPT_MODE, key, parameterSpec)
-
-            val decryptedBytes = cipher.doFinal(ciphertext)
-            String(decryptedBytes, Charsets.UTF_8)
-        } catch (e: Exception) {
-            // In case of invalid key or modified payload
-            "[Encrypted Content - Secure Key Required]"
+    private fun useKey(operation: (SecretKey) -> String): String {
+        if (!access.value) throw VaultUnavailableException()
+        return try { operation(key()) } catch (e: Exception) {
+            lock()
+            throw VaultUnavailableException(e)
         }
     }
 
-    /**
-     * Generates SHA-256 integrity hash for documents
-     */
-    fun computeSha256(input: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hash = digest.digest(input.toByteArray(Charsets.UTF_8))
-        return hash.joinToString("") { "%02x".format(it) }
-    }
+    fun computeSha256(input: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(input.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 }

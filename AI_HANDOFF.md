@@ -1,0 +1,123 @@
+# Android companion development handoff
+
+## Current integration
+
+GitHub is authoritative. This update starts from Android main
+`7028ec6d131ffaaf9e03d2f22b3550d7a38ddf3c` and desktop main
+`c269a18eec4ea5b4e347e3520be1cd4e9bd88876`. Both were fetched again before
+publication. Work uses `chatgpt/shared-companion-workflows-2026-10-05` in both
+repositories. The owner merges main. Android remains the original application ID
+`com.aistudio.privateai.kq7zwa`, now development version **1.1-dev**, version code **2**.
+The desktop remains **3.0.1-dev**. Source changes do not update installed applications.
+
+Read `AGENTS.md`, `docs/SHARED_DESKTOP_WORKFLOWS.md`,
+`docs/ANDROID_VALIDATION_PROGRESS.md`, and the desktop
+`docs/ANDROID_COMPANION_CONTRACT.md` before editing. The desktop is
+`https://github.com/yosefbf-bot/Private-AI-OG-google-version`; the companion is
+`https://github.com/yosefbf-bot/AI-Mobile-companion-app`.
+
+## Implemented changes
+
+- Real desktop-owned chat/history, explicitly shared PC conversations, status,
+  report-job and clinical-alert metadata replace simulated real-mode results.
+  Demo remains separate and labeled. Unsupported remote job/agent/approval
+  controls fail clearly rather than claim work happened.
+  Dashboard counts/status are explicitly cached, zero alerts are not an all-clear,
+  and recent activity uses saved task rows rather than fabricated completion claims.
+- Typed notes, rounds, explicitly dated reminders and supported evidence feed
+  the desktop's encrypted source-linked capture service. Proposed actions use
+  the same canonical Action Center, exact revision checks and completion notes.
+  Outlook/WhatsApp drafts remain internal review items. Pictures are evidence,
+  not an implemented image-analysis result; unknown facts remain unknown.
+- HTTPS verifies the paired certificate, endpoint and fingerprint. Pairing is
+  per-device/revocable, with independent scopes. No plaintext HTTP, trust-all
+  TLS, fixed default pairing secret or arbitrary desktop RPC is enabled.
+- Encrypted pending operations retain stable request identity, original privacy
+  requirements and the exact device pairing. Re-pairing cannot redirect old
+  work. Partial sync failures remain visible; an unavailable AI model does not
+  prevent non-AI refresh. Notes saved on the phone survive later refresh failure.
+- Saved records and complete configuration use Android Keystore AES-GCM after
+  real OS screen-lock/strong-biometric authentication. Additive Room upgrades
+  and authenticated content migration preserve legacy data; corrupt records
+  roll back rather than trigger destructive migration or new-key replacement.
+  Known old demo caches are retained and labeled unverified.
+- App backgrounding, manual lock and five-minute expiry close the protected UI
+  and cancel foreground requests. Auth/workspace/cancellation epochs prevent
+  later upload chunks or stale responses surviving a lock/re-unlock. Retries
+  after unlock reuse saved identities and bytes. Automatic foreground polling
+  can resume after Stop; no insecure background full-credential processing exists.
+- External photo/file pickers require reauthentication on return. Unsent forms
+  use encrypted RAM, not plaintext saved-state bundles. Process death can lose
+  unsent forms/picker results, but not saved encrypted records.
+- Optional background follow-up polling uses only the separate restricted
+  notification key/certificate and generic notice IDs. It cannot read PHI,
+  notes, chat or evidence. Display permission/channel success precedes receipt;
+  receipt does not complete an action. Offline LAN reachability does not require
+  Internet validation. Checks normally occur at least 15 minutes apart and may
+  be delayed by Android battery policy; this is not instant push or emergency paging.
+- On-device dictation is available only where Android API 31+ has an on-device
+  recognizer. No cloud speech fallback exists. Large stored evidence has bounded
+  readable previews without exporting base64 or private pairing metadata.
+- The official Gradle wrapper/checksums, build regression/lint tasks, Room schema
+  export and GitHub emulator workflow are restored. Test-only credentials belong
+  exclusively to public synthetic fixtures or an explicitly disposable emulator.
+
+## Verification and limits
+
+Final Android results are recorded in `docs/ANDROID_VALIDATION_PROGRESS.md`:
+45 unit tests passed with zero failures/errors/skips, including actual isolated
+desktop HTTPS interoperability; lint passed with zero errors and 72 warnings.
+The frozen-source app/test APK build passed, and the app signature was verified.
+The production input digest remained unchanged throughout the build. Artifact
+hashes and the development signing certificate are recorded in that report.
+Hosted emulator acceptance also actually passed on source `a646614`, push run
+`37399341176`: all four instrumented cases executed with zero skips, failures or
+errors. This includes the real Android OS PIN prompt, authenticated Keystore
+encrypt/decrypt, an unpaired dashboard/Notes workspace and relock/read rejection.
+Hosted unit results are 44 passed plus one explicitly skipped external desktop
+fixture case; the local fixture-enabled suite above passed all 45. Hosted lint
+has zero errors and 74 warnings. The CI APK has a different development signer/
+hash from the local exported APK; this establishes source behavior, not execution
+of that local APK on a physical phone. See the exact run and validation report.
+The real interoperability test requires `PRIVATE_AI_GATEWAY_TEST_PAIR_FILE`, an
+ignored JSON fixture with `pairUri`; it explicitly skips without it. Never print
+or commit that fixture or use a real account/PHI. The Windows local test used a
+running isolated Node Core, encrypted SQLite and pinned HTTPS; calculator output
+is not a new local language-model inference test.
+
+Run with JDK 17 and the configured SDK using the checked-in wrapper:
+
+```text
+gradlew.bat --no-daemon testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+```
+
+Inspect actual XML counts, lint reports and artifact hashes. GitHub workflow
+`android-validation.yml` runs real OS-credential/Keystore tests on an account-free
+disposable emulator; the four-case execution above is recorded separately from
+compilation. Physical
+phone, real LAN, existing signed-install upgrade, camera, local microphone,
+notification delivery, live WhatsApp/mailbox and clinical acceptance remain separate.
+No full AI generation is promised to continue while the phone is locked; foreground
+requests cancel and can be reviewed/retried after unlock. The desktop must remain
+awake and reachable; full access needs its app unlocked. Only explicitly allowed
+generic reminder metadata can operate while the desktop app is locked.
+
+Debug APKs are development candidates. They cannot upgrade an existing APK signed
+with a different certificate. Preserve the original release key and phone data;
+do not uninstall/wipe merely to make an upgrade pass. No production signing key
+is added. SDKs, Gradle caches, keys, databases, APKs and pairing links stay outside Git.
+
+## Future work instruction
+
+Fetch both repositories first; verify origin/main, branch, worktree and versions.
+Preserve unmerged review work and adapt it into the latest architecture. Use new
+chatgpt/* branches and PRs; the owner merges. Keep the desktop as canonical local
+AI/storage and use the existing v1 capability-scoped adapter, not a sample Python
+bridge. Preserve OS authentication, encryption, migrations, stable retries,
+provider/privacy/resource gates and source-linked clinical review. Do not replace
+the current source with an older ZIP or make unavailable capabilities look successful.
+
+If the user's five-hour allowance reaches 1% remaining, save progress and stop.
+Follow the latest explicit resume instruction in the chat; a past one-time
+wakeup is not a recurring work schedule. Scheduling must use the app automation
+tool and cannot be assumed successful if its request is rejected.

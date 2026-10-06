@@ -301,7 +301,7 @@ fun AlertsScreen(
                     }
 
                     Text(
-                        text = "Timestamp: ${SimpleDateFormat("MMM d, yyyy • HH:mm:ss", Locale.getDefault()).format(Date(alert.timestamp))}",
+                        text = "Timestamp: ${if (alert.timestamp > 0) SimpleDateFormat("MMM d, yyyy • HH:mm:ss", Locale.getDefault()).format(Date(alert.timestamp)) else "Not provided"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -313,7 +313,7 @@ fun AlertsScreen(
                             .padding(8.dp)
                     ) {
                         Text(
-                            text = "🔒 Zero-Cloud Guarantee: Clinical surveillance logic evaluated directly on local desktop host. Identifiers stripped in transit.",
+                            text = "Desktop alert metadata only. Source data and processing policy must be reviewed on the PC; this is not an all-clear.",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
                             color = CyberTeal
                         )

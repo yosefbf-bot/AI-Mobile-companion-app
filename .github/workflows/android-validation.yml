@@ -1,0 +1,118 @@
+name: Android validation
+on:
+  pull_request:
+  push:
+    branches: [main, "chatgpt/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build-test-device:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Reserve disposable hosted-runner disk for Android
+        run: |
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          df -h "$RUNNER_TEMP"
+          # This Android job uses neither .NET nor CodeQL. Never run this on a user machine.
+          for tool_dir in /usr/share/dotnet /opt/hostedtoolcache/CodeQL; do
+            if [ -d "$tool_dir" ]; then
+              resolved_tool="$(readlink -f "$tool_dir")"
+              test "$resolved_tool" = "$tool_dir"
+              du -sh "$resolved_tool"
+              sudo rm -rf -- "$resolved_tool"
+            fi
+          done
+          df -h "$RUNNER_TEMP"
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          cmdline-tools-version: "12266719"
+          packages: "platform-tools"
+          log-accepted-android-sdk-licenses: "false"
+      - name: Verify wrapper and prepare SDK
+        run: |
+          echo "b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          chmod +x gradlew
+          (yes || true) | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36.1" "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "system-images;android-34;google_apis;x86_64"
+          test -x "$ANDROID_HOME/emulator/emulator"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+      - name: Build and run regression tests and lint
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug assembleDebugAndroidTest
+      - name: Start isolated Android emulator
+        run: |
+          sudo chmod a+rw /dev/kvm
+          df -h "$RUNNER_TEMP"
+          available_bytes="$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' ')"
+          test "$available_bytes" -ge 8589934592
+          # Both SDK creation and emulator launch must resolve the same disposable AVD.
+          export ANDROID_USER_HOME="$RUNNER_TEMP/privateai-android-user"
+          export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
+          export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd -n privateai_api34 -k "system-images;android-34;google_apis;x86_64" -p "$ANDROID_AVD_HOME/privateai_api34.avd" --force
+          test -f "$ANDROID_AVD_HOME/privateai_api34.ini"
+          # Request bounded userdata; the system image's larger minimum still needs reserved disk.
+          sed -i '/^disk.dataPartition.size=/d' "$ANDROID_AVD_HOME/privateai_api34.avd/config.ini"
+          printf '\ndisk.dataPartition.size=2G\n' >> "$ANDROID_AVD_HOME/privateai_api34.avd/config.ini"
+          grep -Fx disk.dataPartition.size=2G "$ANDROID_AVD_HOME/privateai_api34.avd/config.ini"
+          emulator -list-avds | grep -Fx privateai_api34
+          nohup emulator -avd privateai_api34 -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 2048 -partition-size 2048 >"$RUNNER_TEMP/privateai-emulator.log" 2>&1 &
+          emulator_pid=$!
+          if ! timeout 90s adb wait-for-device; then
+            cat "$RUNNER_TEMP/privateai-emulator.log"
+            exit 1
+          fi
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/privateai-emulator.log"
+              exit 1
+            fi
+            if [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1" ]; then break; fi
+            sleep 3
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          adb shell input keyevent 82
+          # This PIN belongs only to this disposable, account-free CI emulator.
+          adb shell locksettings set-pin 846219
+      - name: Run actual Android lock and startup acceptance
+        run: ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.privateai.test.devicePin=846219
+      - name: Capture disposable emulator failure evidence
+        if: failure()
+        run: |
+          mkdir -p app/build/reports/ci-emulator
+          if [ -f "$RUNNER_TEMP/privateai-emulator.log" ]; then
+            cp "$RUNNER_TEMP/privateai-emulator.log" app/build/reports/ci-emulator/emulator.log
+          fi
+          if adb get-state >/dev/null 2>&1; then
+            adb exec-out screencap -p >app/build/reports/ci-emulator/screen.png || true
+            adb shell uiautomator dump /sdcard/privateai-ci-window.xml >/dev/null 2>&1 || true
+            adb pull /sdcard/privateai-ci-window.xml app/build/reports/ci-emulator/window.xml >/dev/null 2>&1 || true
+            adb logcat -d -t 1200 >app/build/reports/ci-emulator/logcat.txt || true
+          fi
+      - name: Hash debug candidate
+        if: success()
+        run: sha256sum app/build/outputs/apk/debug/app-debug.apk >app/build/outputs/apk/debug/SHA256SUMS.txt
+      - name: Upload exact-run candidate and validation reports
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: android-validation-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/debug/
+            app/build/reports/
+            app/build/test-results/
+            app/build/outputs/androidTest-results/
+          retention-days: 14
+          if-no-files-found: warn

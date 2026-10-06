@@ -1,349 +1,247 @@
 package com.example.data.network
 
-import com.example.data.crypto.EncryptionManager
+import android.util.Base64
 import com.example.data.local.entity.DesktopNotification
 import com.example.data.local.entity.DesktopTask
-import com.example.data.local.entity.EncryptedChatMessage
-import com.example.data.local.entity.EncryptedChatSession
-import com.example.data.local.entity.EncryptedDocument
 import com.example.data.model.DesktopNodeConfig
 import com.example.data.model.NodeStats
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.withContext
+import com.example.data.model.FollowUpNotification
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.collect
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.UUID
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
+import java.security.KeyStore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 object GatewayEndpoints {
     const val STATUS = "/mobile/api/v1/status"
-    const val AUTH_PAIR = "/mobile/api/v1/auth/pair"
-    const val AUTH_SESSION = "/mobile/api/v1/auth/session"
-    const val DASHBOARD = "/mobile/api/v1/dashboard"
-    const val CHATS = "/mobile/api/v1/chats"
     const val CHAT_SEND = "/mobile/api/v1/chat/send"
     const val TASKS = "/mobile/api/v1/tasks"
-    const val AGENTS = "/mobile/api/v1/agents"
-    const val PLAYBOOKS = "/mobile/api/v1/playbooks"
     const val ALERTS = "/mobile/api/v1/alerts"
-    const val APPROVALS = "/mobile/api/v1/approvals"
-    const val FILES_UPLOAD = "/mobile/api/v1/files/upload"
-    const val FILES_DOWNLOAD = "/mobile/api/v1/files"
-    const val EVENTS_WS = "/mobile/api/v1/events"
 }
 
-data class DesktopSyncPackage(
-    val newNotifications: List<DesktopNotification>,
-    val updatedTasks: List<DesktopTask>
-)
+data class DesktopSyncPackage(val newNotifications: List<DesktopNotification>, val updatedTasks: List<DesktopTask>)
+data class GatewayReply(val reply: String, val sessionId: String, val requestId: String?, val provider: String?, val model: String?, val incomplete: Boolean)
+class GatewayException(val code: String, val httpStatus: Int = 0, message: String) : IOException(message)
 
-class DesktopNodeService {
+data class GatewayAuthorizationEpoch(val authentication: Long = 0, val workspace: Long = 0)
+class GatewayRequestLease internal constructor(internal val epoch: GatewayAuthorizationEpoch, internal val cancellation: Long)
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .build()
+class DesktopNodeService(
+    private val authorizationEpoch: (DesktopNodeConfig) -> GatewayAuthorizationEpoch? = { GatewayAuthorizationEpoch() }
+) {
+    private val demo = DemoNodeService()
+    private val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<Call>()
+    private val cancellationGeneration = AtomicLong()
 
-    /**
-     * Checks if the Private AI Companion Gateway (/mobile/api/v1/status) is reachable on LAN/VPN.
-     */
-    suspend fun checkHealth(config: DesktopNodeConfig): Boolean = withContext(Dispatchers.IO) {
+    fun cancelAll() { cancellationGeneration.incrementAndGet(); calls.forEach { it.cancel() } }
+
+    fun authorizationLease(config: DesktopNodeConfig): GatewayRequestLease {
+        val epoch = authorizationEpoch(config) ?: throw GatewayException("PHONE_LOCKED",423,"Unlock the protected phone workspace before continuing.")
+        return GatewayRequestLease(epoch, cancellationGeneration.get())
+    }
+    private fun requireAuthorized(config: DesktopNodeConfig, lease: GatewayRequestLease) {
+        if (authorizationEpoch(config) != lease.epoch) throw GatewayException("PHONE_LOCKED",423,"The protected workspace changed. Unlock and retry the retained request.")
+        if (cancellationGeneration.get() != lease.cancellation) throw CancellationException("The desktop request was stopped.")
+    }
+
+    private fun client(config: DesktopNodeConfig, chat: Boolean = false): OkHttpClient {
+        val cert = try { PairingConfigParser.certificate(config) } catch (_: Exception) {
+            throw GatewayException("PAIRING_REQUIRED", message = "Pair again with the desktop's complete HTTPS link and certificate.")
+        }
+        val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("paired-desktop", cert) }
+        val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
+        val trust = factory.trustManagers.filterIsInstance<X509TrustManager>().single()
+        val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
+        return OkHttpClient.Builder()
+            .sslSocketFactory(context.socketFactory, trust)
+            // Keep ordinary hostname/IP verification. Never accept all self-signed certificates.
+            .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
+            .connectTimeout(5, TimeUnit.SECONDS).readTimeout(if (chat) 330L else 20L, TimeUnit.SECONDS).callTimeout(if (chat) 335L else 25L, TimeUnit.SECONDS)
+            .build()
+    }
+
+    suspend fun request(config: DesktopNodeConfig, endpoint: String, data: JSONObject? = null,
+        lease: GatewayRequestLease = authorizationLease(config)): JSONObject {
+        currentCoroutineContext().ensureActive()
+        requireAuthorized(config, lease)
+        if (config.simulatedNodeEnabled) throw GatewayException("DEMO", message = "Demo mode cannot contact the desktop.")
+        require(endpoint.startsWith("/mobile/api/v1/") && !endpoint.contains("?") && !endpoint.contains("#"))
+        val securedClient = client(config, endpoint == GatewayEndpoints.CHAT_SEND)
+        val request = Request.Builder().url("https://${config.hostIp}:${config.port}$endpoint")
+            .header("Host", "${config.hostIp}:${config.port}")
+            .header("X-Pair-Key", config.pairKey).header("Accept", "application/json")
+        if (data != null) request.post(data.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+        val call = securedClient.newCall(request.build())
+        calls.add(call)
+        return suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel(); calls.remove(call) }
+            try {
+                requireAuthorized(config, lease)
+                if (!continuation.isActive) { call.cancel(); calls.remove(call); return@suspendCancellableCoroutine }
+            } catch (e: Exception) {
+                call.cancel(); calls.remove(call)
+                if (continuation.isActive) continuation.resumeWithException(e)
+                return@suspendCancellableCoroutine
+            }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    calls.remove(call)
+                    if (continuation.isActive) continuation.resumeWithException(
+                        GatewayException(if (e is javax.net.ssl.SSLException) "TLS" else "OFFLINE", message =
+                            if (e is javax.net.ssl.SSLException) "The paired desktop certificate could not be verified. Pair again." else "Desktop unavailable or request interrupted. Your pending request is retained.")
+                    )
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        try {
+                            requireAuthorized(config, lease)
+                            val body = response.body ?: throw GatewayException("PROTOCOL", message = "Desktop returned no response.")
+                            val max = if (endpoint.endsWith("/evidence/read")) 8L * 1024 * 1024 else 1024L * 1024
+                            val source = body.source()
+                            if (body.contentLength() > max || source.request(max + 1) && source.buffer.size > max) throw GatewayException("LIMIT", message = "Desktop response exceeded the allowed size.")
+                            val json = try { JSONObject(source.readUtf8()) } catch (_: Exception) { throw GatewayException("PROTOCOL", message = "Desktop returned an invalid response.") }
+                            if (!response.isSuccessful) {
+                                val code = json.optJSONObject("error")?.optString("code")?.takeIf { it.matches(Regex("[A-Z0-9_]{1,60}")) } ?: "HTTP_${response.code}"
+                                throw GatewayException(code, response.code, errorMessage(code, response.code))
+                            }
+                            requireAuthorized(config, lease)
+                            if (call.isCanceled()) throw CancellationException("The desktop request was stopped.")
+                            if (continuation.isActive) continuation.resume(json)
+                        } catch (e: Exception) { if (continuation.isActive) continuation.resumeWithException(e) }
+                        finally { calls.remove(call) }
+                    }
+                }
+            })
+        }
+    }
+
+    suspend fun checkHealth(config: DesktopNodeConfig): Boolean = try {
+        if (config.simulatedNodeEnabled) false else getNodeStats(config).serverName.isNotBlank()
+    } catch (_: Exception) { false }
+
+    suspend fun getNodeStats(config: DesktopNodeConfig): NodeStats {
+        if (config.simulatedNodeEnabled) return NodeStats(serverName = "DEMO — isolated phone workspace", loadedModel = "No desktop model is running", localIp = "Demo", protocolVersion = "Demo")
+        return parseStatus(request(config, GatewayEndpoints.STATUS), config)
+    }
+
+    suspend fun dispatchInferenceToDesktop(sessionId: String, userPrompt: String, config: DesktopNodeConfig, requestId: String, requireLocal: Boolean = true, requireHipaa: Boolean = true): GatewayReply {
         if (config.simulatedNodeEnabled) {
-            return@withContext true
+            val answer = StringBuilder()
+            demo.streamInferenceFromDesktop(userPrompt).collect { answer.clear(); answer.append(it) }
+            return GatewayReply("DEMO — synthetic example; no desktop work performed.\n\n$answer", sessionId, requestId, null, "Demo", false)
         }
+        val json = request(config, GatewayEndpoints.CHAT_SEND, chatRequest(sessionId,userPrompt,requestId,requireLocal,requireHipaa))
+        val reply = json.optString("reply")
+        if (reply.isBlank() || json.optString("sessionId") != sessionId || json.optString("requestId") != requestId) throw GatewayException("PROTOCOL", message = "Desktop acknowledgment does not match this request.")
+        val processing = json.optJSONObject("processing")
+        return GatewayReply(reply, sessionId, requestId, nullableString(processing, "provider"), nullableString(processing, "model"), json.optBoolean("incomplete"))
+    }
 
-        return@withContext try {
-            val url = "https://${config.hostIp}:${config.port}${GatewayEndpoints.STATUS}"
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("X-Pair-Key", config.pairKey)
-                .build()
-            val response = httpClient.newCall(request).execute()
-            response.isSuccessful
-        } catch (e: Exception) {
-            // If physical PC is offline or in airgapped testing, return true if simulated mode or fallback
-            config.simulatedNodeEnabled
+    suspend fun pullDesktopSync(config: DesktopNodeConfig, stats: NodeStats): DesktopSyncPackage {
+        if (config.simulatedNodeEnabled) {
+            val rows = demo.pullDesktopSync(config)
+            return DesktopSyncPackage(rows.newNotifications.map { it.copy(title = "DEMO — ${it.title}", message = "Synthetic example. No clinical finding or action occurred.\n${it.message}") },
+                rows.updatedTasks.map { it.copy(title = "DEMO — ${it.title}", resultSummary = "Synthetic demonstration; no desktop task executed.", modelName = "Demo") })
         }
+        val lease = authorizationLease(config)
+        val tasks = if ("tasks" in stats.scopes) parseTasks(request(config, GatewayEndpoints.TASKS, lease = lease)) else emptyList()
+        val alerts = if ("alerts" in stats.scopes) parseAlerts(request(config, GatewayEndpoints.ALERTS, lease = lease)) else emptyList()
+        return DesktopSyncPackage(alerts, tasks)
     }
 
-    /**
-     * Fetches current desktop hardware & model status (CPU, GPU, VRAM, loaded model)
-     */
-    suspend fun getNodeStats(config: DesktopNodeConfig): NodeStats = withContext(Dispatchers.IO) {
-        NodeStats(
-            serverName = config.friendlyName,
-            loadedModel = "Llama-3.3-70B-Instruct-Q4 (Local Workstation)",
-            cpuUsagePercent = (15..32).random(),
-            gpuUsagePercent = (35..78).random(),
-            vramUsedGb = 16.4f,
-            vramTotalGb = 24.0f,
-            activeJobsCount = 2,
-            serverUptime = "4d 18h 35m",
-            localIp = "${config.hostIp}:${config.port}",
-            protocolVersion = "Gateway-v1-E2EE"
-        )
+    suspend fun fetchNotifications(config: DesktopNodeConfig): List<FollowUpNotification> {
+        val array = request(config, "/mobile/api/v1/notifications").getJSONArray("notifications")
+        return (0 until array.length()).map { i -> val row = array.getJSONObject(i)
+            FollowUpNotification(row.getString("id"), if (row.isNull("actionId")) null else row.getString("actionId"), row.getLong("created"), row.getString("status")) }
+    }
+    suspend fun acknowledgeNotification(config: DesktopNodeConfig, id: String) {
+        val reply = request(config, "/mobile/api/v1/notifications/ack", JSONObject().put("id", id))
+        require(reply.getString("id") == id && reply.getString("status") == "acknowledged") { "Notification receipt was not confirmed." }
     }
 
-    /**
-     * Streams inference tokens in real-time from the workstation node.
-     * Android does NOT call OpenAI or external clouds; Windows Private AI processes and routes.
-     */
-    fun streamInferenceFromDesktop(
-        prompt: String,
-        attachmentName: String? = null,
-        attachmentType: String? = null
-    ): Flow<String> = flow {
-        val fullAnswer = generateDesktopAIResponse(prompt, attachmentName, attachmentType)
-        val tokens = fullAnswer.split(" ")
+    suspend fun startAgent(name: String, config: DesktopNodeConfig): DesktopTask {
+        if (!config.simulatedNodeEnabled) unsupported("Agent execution")
+        return demo.startAgent(name, config).copy(title = "DEMO — $name", modelName = "Demo", resultSummary = "Synthetic demonstration; no task was dispatched.")
+    }
+    suspend fun runPlaybook(name: String, config: DesktopNodeConfig): DesktopTask {
+        if (!config.simulatedNodeEnabled) unsupported("Playbook execution")
+        return demo.runPlaybook(name, config).copy(title = "DEMO — $name", modelName = "Demo", resultSummary = "Synthetic demonstration; no playbook was executed.")
+    }
+    suspend fun cancelTask(taskId: String, config: DesktopNodeConfig) { if (!config.simulatedNodeEnabled) unsupported("Report-job cancellation") }
+    suspend fun retryTask(taskId: String, config: DesktopNodeConfig) { if (!config.simulatedNodeEnabled) unsupported("Report-job retry") }
+    suspend fun submitApproval(taskId: String, approved: Boolean, config: DesktopNodeConfig) { if (!config.simulatedNodeEnabled) unsupported("Remote approval") }
 
-        for (i in tokens.indices) {
-            delay((25..55).random().toLong()) // Snappy local token emission
-            emit(tokens.take(i + 1).joinToString(" "))
+    companion object {
+        fun chatRequest(sessionId: String, prompt: String, requestId: String, requireLocal: Boolean, requireHipaa: Boolean): JSONObject {
+            if (prompt.isBlank() || prompt.length > 12000) throw GatewayException("LIMIT",422,"This message is too long for the desktop. Send shorter sections of up to 12,000 characters.")
+            val input = JSONObject().put("prompt",prompt).put("sessionId",sessionId).put("requestId",requestId)
+                .put("requireLocal",requireLocal).put("requireHipaa",requireHipaa)
+            if (input.toString().toByteArray(Charsets.UTF_8).size > 32 * 1024) throw GatewayException("LIMIT",422,"This message is too large for the desktop. Send shorter sections.")
+            return input
         }
-    }.flowOn(Dispatchers.IO)
-
-    /**
-     * Sends prompt to desktop node for full inference.
-     */
-    suspend fun dispatchInferenceToDesktop(
-        sessionId: String,
-        userPrompt: String,
-        config: DesktopNodeConfig,
-        attachmentName: String? = null,
-        attachmentType: String? = null
-    ): EncryptedChatMessage = withContext(Dispatchers.IO) {
-        delay(900)
-
-        val answerText = generateDesktopAIResponse(userPrompt, attachmentName, attachmentType)
-        val encryptedAnswer = EncryptionManager.encrypt(answerText)
-
-        val modelUsed = if (attachmentType == "IMAGE") {
-            "Llama-3.2-Vision (Workstation Local)"
-        } else {
-            "Llama-3.3-70B-Instruct (Desktop Node)"
+        fun unsupported(name: String): Nothing = throw GatewayException("UNSUPPORTED", message = "$name is not exposed by the paired desktop. Review it on the PC.")
+        private fun nullableString(json: JSONObject?, key: String): String? = json?.takeUnless { it.isNull(key) }?.optString(key)?.takeIf { it.isNotBlank() }
+        fun parseStatus(json: JSONObject, config: DesktopNodeConfig): NodeStats {
+            if (json.optString("status") != "ONLINE" || json.optInt("protocolVersion") != 1) throw GatewayException("PROTOCOL", message = "Unsupported desktop gateway status.")
+            val scopes = json.optJSONObject("scopes") ?: JSONObject()
+            val caps = json.optJSONArray("capabilities")
+            return NodeStats(serverName = json.optString("serverName", "Private AI desktop"),
+                loadedModel = nullableString(json, "loadedModel") ?: "No local model loaded",
+                cpuUsagePercent = if (json.isNull("cpuUsage")) null else json.optInt("cpuUsage"),
+                gpuUsagePercent = if (json.isNull("gpuUsage")) null else json.optInt("gpuUsage"),
+                vramUsedGb = if (json.isNull("vramUsedGb")) null else json.optDouble("vramUsedGb").toFloat(),
+                vramTotalGb = if (json.isNull("vramTotalGb")) null else json.optDouble("vramTotalGb").toFloat(),
+                activeJobsCount = if (json.isNull("activeJobs")) null else json.optInt("activeJobs"),
+                serverUptime = json.optString("uptime", "Unknown"), localIp = "${config.hostIp}:${config.port}", protocolVersion = "Gateway v1",
+                localModelState = json.optString("localModelState", "unknown"), processingMode = json.optString("processingMode", "Unknown"), provider = json.optString("provider", "Unknown"),
+                scopes = scopes.keys().asSequence().filter { scopes.optBoolean(it) }.toSet(),
+                capabilities = if (caps == null) emptySet() else (0 until caps.length()).map { caps.getString(it) }.toSet())
         }
-
-        EncryptedChatMessage(
-            id = UUID.randomUUID().toString(),
-            sessionId = sessionId,
-            sender = "assistant",
-            encryptedContent = encryptedAnswer,
-            timestamp = System.currentTimeMillis(),
-            status = "SYNCED_DESKTOP",
-            promptTokens = userPrompt.length / 4 + (if (attachmentName != null) 384 else 12),
-            completionTokens = answerText.length / 4 + 24,
-            modelName = modelUsed
-        )
-    }
-
-    /**
-     * Pulls latest delta sync from desktop node
-     */
-    suspend fun pullDesktopSync(config: DesktopNodeConfig): DesktopSyncPackage = withContext(Dispatchers.IO) {
-        delay(500)
-        DesktopSyncPackage(
-            newNotifications = listOf(
-                DesktopNotification(
-                    id = "alert-1",
-                    title = "Critical Clinical Finding",
-                    message = "Elevated fall risk & psychotropic titration detected for resident in Unit 3 requiring review.",
-                    timestamp = System.currentTimeMillis() - 15 * 60_000,
-                    severity = "CRITICAL",
-                    category = "CLINICAL",
-                    requiresApproval = false,
-                    assignedTo = "Director of Nursing",
-                    relatedAction = "Review Medication Orders"
-                ),
-                DesktopNotification(
-                    id = "alert-2",
-                    title = "Agent Requires Approval",
-                    message = "Staffing Analysis Agent proposes automated shift-fill broadcast to float pool.",
-                    timestamp = System.currentTimeMillis() - 42 * 60_000,
-                    severity = "HIGH",
-                    category = "AGENT_APPROVAL",
-                    requiresApproval = true,
-                    assignedTo = "Administrator",
-                    relatedAction = "Approve Shift Broadcast"
-                ),
-                DesktopNotification(
-                    id = "alert-3",
-                    title = "Daily Surveillance Finding",
-                    message = "Surveillance algorithm detected 3 positive respiratory panels in West Wing within 36 hours.",
-                    timestamp = System.currentTimeMillis() - 95 * 60_000,
-                    severity = "HIGH",
-                    category = "SURVEILLANCE",
-                    requiresApproval = false,
-                    assignedTo = "Infection Preventionist",
-                    relatedAction = "Run Contact Cluster Trace"
-                ),
-                DesktopNotification(
-                    id = "alert-4",
-                    title = "Antipsychotic Review Follow-up",
-                    message = "Quarterly Gradual Dose Reduction (GDR) eligibility review ready for 5 residents.",
-                    timestamp = System.currentTimeMillis() - 180 * 60_000,
-                    severity = "MEDIUM",
-                    category = "OPERATIONAL",
-                    requiresApproval = false,
-                    assignedTo = "Attending Physician",
-                    relatedAction = "Open GDR Summary"
-                )
-            ),
-            updatedTasks = listOf(
-                DesktopTask(
-                    id = "task-surveillance",
-                    title = "Clinical Surveillance",
-                    status = "COMPLETED",
-                    category = "SURVEILLANCE",
-                    progress = 1.0f,
-                    modelName = "Llama-3.3-70B-Clinical",
-                    startedAt = System.currentTimeMillis() - 7200_000,
-                    completedAt = System.currentTimeMillis() - 1200_000,
-                    resultSummary = "Analyzed 128 resident EHR updates. Flagged 2 high-priority trends with zero cloud leak."
-                ),
-                DesktopTask(
-                    id = "task-weekly",
-                    title = "Weekly Operations Review",
-                    status = "RUNNING",
-                    category = "OPERATIONS",
-                    progress = 0.68f,
-                    modelName = "Llama-3.3-70B-Operations",
-                    startedAt = System.currentTimeMillis() - 1800_000,
-                    resultSummary = "Compiling census variance and labor overtime metrics across 4 facilities."
-                ),
-                DesktopTask(
-                    id = "task-morning",
-                    title = "Morning Administrator Brief",
-                    status = "COMPLETED",
-                    category = "AGENT",
-                    progress = 1.0f,
-                    modelName = "Llama-3.3-70B-Executive",
-                    startedAt = System.currentTimeMillis() - 14400_000,
-                    completedAt = System.currentTimeMillis() - 13800_000,
-                    resultSummary = "Synthesized clinical incidents, admissions, and compliance flags into executive summary."
-                ),
-                DesktopTask(
-                    id = "task-antipsychotic",
-                    title = "Antipsychotic Review Playbook",
-                    status = "RUNNING",
-                    category = "PLAYBOOK",
-                    progress = 0.45f,
-                    modelName = "Llama-3.3-70B-Clinical",
-                    startedAt = System.currentTimeMillis() - 600_000,
-                    resultSummary = "Cross-referencing behavioral logs with psychotropic administration records."
-                ),
-                DesktopTask(
-                    id = "task-staffing",
-                    title = "Staffing Analysis Agent",
-                    status = "NEEDS_APPROVAL",
-                    category = "AGENT",
-                    progress = 0.85f,
-                    modelName = "Private-AI-Agent",
-                    startedAt = System.currentTimeMillis() - 2400_000,
-                    requiresApproval = true,
-                    approvalPrompt = "Broadcast available weekend PM CNA shifts to pre-qualified float pool?"
-                )
-            )
-        )
-    }
-
-    suspend fun startAgent(name: String, config: DesktopNodeConfig): DesktopTask = withContext(Dispatchers.IO) {
-        delay(500)
-        DesktopTask(
-            id = "agent-${System.currentTimeMillis()}",
-            title = name,
-            status = "RUNNING",
-            category = "AGENT",
-            progress = 0.15f,
-            modelName = "Private-AI Workstation Agent",
-            startedAt = System.currentTimeMillis(),
-            resultSummary = "Agent initialized on Windows host. Scanning environment and executing playbook steps."
-        )
-    }
-
-    suspend fun runPlaybook(name: String, config: DesktopNodeConfig): DesktopTask = withContext(Dispatchers.IO) {
-        delay(500)
-        DesktopTask(
-            id = "playbook-${System.currentTimeMillis()}",
-            title = name,
-            status = "RUNNING",
-            category = "PLAYBOOK",
-            progress = 0.10f,
-            modelName = "Llama-3.3-70B-Clinical",
-            startedAt = System.currentTimeMillis(),
-            resultSummary = "Playbook pipeline started on desktop node. Processing rules against local database."
-        )
-    }
-
-    suspend fun cancelTask(taskId: String, config: DesktopNodeConfig): Boolean = withContext(Dispatchers.IO) {
-        delay(250)
-        true
-    }
-
-    suspend fun retryTask(taskId: String, config: DesktopNodeConfig): Boolean = withContext(Dispatchers.IO) {
-        delay(300)
-        true
-    }
-
-    suspend fun submitApproval(taskId: String, approved: Boolean, config: DesktopNodeConfig): Boolean = withContext(Dispatchers.IO) {
-        delay(300)
-        true
-    }
-
-    private fun generateDesktopAIResponse(
-        prompt: String,
-        attachmentName: String? = null,
-        attachmentType: String? = null
-    ): String {
-        val lowerPrompt = prompt.lowercase()
-
-        if (attachmentName != null) {
-            return "### Workstation Analysis: $attachmentName\n\n" +
-                    "**Processing Mode**: Local GPU Tensor Core\n" +
-                    "**Status**: Complete (Zero cloud transit)\n\n" +
-                    "1. Document structure extracted and indexed into local vector database.\n" +
-                    "2. Cross-referenced against compliance guidelines and clinical protocols.\n" +
-                    "3. Key entities, medication orders, and dates validated."
+        fun parseTasks(json: JSONObject): List<DesktopTask> {
+            val array = json.getJSONArray("tasks")
+            return (0 until array.length()).map { i ->
+                val row = array.getJSONObject(i)
+                DesktopTask(id = row.getString("id"), title = "Report job ${row.getString("id").take(8)}",
+                    status = row.getString("status").uppercase(), category = "REPORT", modelName = "Not provided",
+                    startedAt = if (row.isNull("created")) 0 else row.getLong("created"), resultSummary = "Status only. Review results and approvals on the desktop.")
+            }
         }
-
-        return when {
-            lowerPrompt.contains("surveillance") || lowerPrompt.contains("infection") -> {
-                "### Daily Clinical Surveillance Summary\n\n" +
-                        "• **Surveillance Window**: Last 24 Hours\n" +
-                        "• **Units Monitored**: 4 Skilled Nursing Units (142 residents)\n" +
-                        "• **Findings**: 2 residents flagged for early respiratory symptoms (Room 214, Room 302).\n" +
-                        "• **Protocol Action**: Infection Preventionist notified; cohort isolation protocols staged on desktop."
+        fun parseAlerts(json: JSONObject): List<DesktopNotification> {
+            val array = json.getJSONArray("alerts")
+            return (0 until array.length()).map { i ->
+                val row = array.getJSONObject(i)
+                DesktopNotification(id = row.getString("id"), title = "Clinical alert — review on desktop",
+                    message = "Category: ${row.optString("category", "Unknown")}. Status: ${row.optString("status", "Unknown")}. Metadata only; an empty list is not an all-clear.",
+                    timestamp = 0, severity = row.optString("severity", "INFO").uppercase(), category = "CLINICAL")
             }
-            lowerPrompt.contains("antipsychotic") || lowerPrompt.contains("gdr") -> {
-                "### Antipsychotic & GDR Review\n\n" +
-                        "• **Compliance Benchmark**: CMS F-758 Regulatory Standards\n" +
-                        "• **Identified Candidates**: 3 residents meeting 6-month stability criteria for Gradual Dose Reduction (GDR).\n" +
-                        "• **Behavioral Baseline**: Adverse symptom episodes < 1/month. Attending physician notification drafted."
-            }
-            lowerPrompt.contains("brief") || lowerPrompt.contains("morning") -> {
-                "### Morning Administrator Brief\n\n" +
-                        "• **Census**: 94.2% Occupancy (132/140 beds)\n" +
-                        "• **Staffing Ratio**: 3.85 HPRD (Compliant with State & Federal mandates)\n" +
-                        "• **Clinical Escalations**: 1 fall with zero injury; 2 hospital returns cleared.\n" +
-                        "• **Open Approvals**: 1 float pool shift dispatch pending administrator signoff."
-            }
-            lowerPrompt.contains("zero-trust") || lowerPrompt.contains("encrypt") || lowerPrompt.contains("security") -> {
-                "### Private AI Security Architecture\n\n" +
-                        "1. **Local Host Principle**: Windows Private AI is the brain and primary storage.\n" +
-                        "2. **Companion Gateway**: Exposes only restricted `/mobile/api/v1/` routes.\n" +
-                        "3. **Keystore Pinning**: Android private keys never leave device hardware Keystore.\n" +
-                        "4. **No Third-Party Cloud**: OpenAI keys reside strictly on your Windows workstation."
-            }
-            else -> {
-                "### Private AI Workstation Response\n\n" +
-                        "Synthesized by local model running on your Windows workstation.\n\n" +
-                        "• **Zero Data Leak**: Your prompt and attachments never touch external third-party cloud servers.\n" +
-                        "• **Gateway Channel**: Routed via encrypted Companion Gateway (`/mobile/api/v1/`).\n" +
-                        "• **Audit Trail**: Action recorded in workstation tamper-evident local audit log."
-            }
+        }
+        private fun errorMessage(code: String, status: Int): String = when {
+            status == 401 -> "This phone is unpaired or its access was revoked. Pair again on the desktop."
+            status == 423 -> "The desktop is locked. Unlock it before using the companion."
+            status == 403 -> "The paired phone does not have permission for this operation."
+            status == 429 -> "Desktop request limit reached. Wait before retrying."
+            code == "INTERRUPTED" -> "Desktop execution was interrupted. Review the conversation before deciding to send a new request."
+            code == "CHANGED" -> "This request ID was already used with different contents."
+            code == "BUSY" -> "Desktop is busy. This request remains pending."
+            code == "COMPANION_ATTACHMENT" -> "Use a reviewed note with evidence; chat uploads are not supported."
+            else -> "Desktop could not finish this request ($code). No success was recorded."
         }
     }
 }

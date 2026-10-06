@@ -58,6 +58,11 @@ fun ConnectionStatusBadge(
     val isPulsing: Boolean
 
     when (status) {
+        ConnectionStatus.DEMO -> {
+            ledColor = StatusAmber
+            statusText = "Demo — no desktop connection"
+            isPulsing = false
+        }
         ConnectionStatus.CONNECTED -> {
             ledColor = StatusGreen
             statusText = "Desktop Online"

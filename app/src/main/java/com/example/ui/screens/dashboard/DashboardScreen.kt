@@ -201,7 +201,7 @@ fun DashboardScreen(
                                 )
                             )
                             Text(
-                                text = "Windows Companion Gateway • Remote Control",
+                                text = "Desktop Companion • Chats & follow-ups",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = CyberTeal,
                                     fontWeight = FontWeight.SemiBold
@@ -294,10 +294,10 @@ fun DashboardScreen(
                 ) {
                     // Critical Alerts card
                     ExecutiveStatCard(
-                        title = "Critical Alerts",
+                        title = "Cached Critical",
                         value = "$criticalAlertsCount",
-                        subtext = if (criticalAlertsCount > 0) "Requires urgent review" else "All clear",
-                        indicatorColor = if (criticalAlertsCount > 0) StatusRed else CyberTeal,
+                        subtext = if (criticalAlertsCount > 0) "Review on desktop" else "Not an all-clear",
+                        indicatorColor = if (criticalAlertsCount > 0) StatusRed else MaterialTheme.colorScheme.onSurfaceVariant,
                         icon = Icons.Default.Warning,
                         onClick = onNavigateAlerts,
                         modifier = Modifier.weight(1f).testTag("stat_critical_alerts")
@@ -305,10 +305,10 @@ fun DashboardScreen(
 
                     // Items Requiring Review card
                     ExecutiveStatCard(
-                        title = "Review Items",
+                        title = "Cached Review",
                         value = "$itemsRequiringReviewCount",
-                        subtext = "Unacknowledged",
-                        indicatorColor = if (itemsRequiringReviewCount > 0) StatusAmber else CyberTeal,
+                        subtext = "Cached unread items",
+                        indicatorColor = if (itemsRequiringReviewCount > 0) StatusAmber else MaterialTheme.colorScheme.onSurfaceVariant,
                         icon = Icons.Default.LocalHospital,
                         onClick = onNavigateAlerts,
                         modifier = Modifier.weight(1f).testTag("stat_review_items")
@@ -316,9 +316,9 @@ fun DashboardScreen(
 
                     // Active Tasks card
                     ExecutiveStatCard(
-                        title = "Active Tasks",
+                        title = "Cached Running",
                         value = "$activeTasksCount",
-                        subtext = "Running on PC",
+                        subtext = "Last reported status",
                         indicatorColor = CyberCyan,
                         icon = Icons.Default.SmartToy,
                         onClick = onNavigateTasks,
@@ -352,7 +352,7 @@ fun DashboardScreen(
                         )
                         QuickActionButton(
                             title = "Morning Briefing",
-                            subtitle = "Administrator Synthesis",
+                            subtitle = "PC review required",
                             icon = Icons.Default.Assignment,
                             onClick = { onQuickAction("Morning Administrator Brief") },
                             modifier = Modifier.weight(1f).testTag("quick_action_morning_brief")
@@ -365,14 +365,14 @@ fun DashboardScreen(
                     ) {
                         QuickActionButton(
                             title = "Run Surveillance",
-                            subtitle = "Clinical Risk & Infection",
+                            subtitle = "PC review required",
                             icon = Icons.Default.LocalHospital,
                             onClick = { onQuickAction("Daily Clinical Surveillance") },
                             modifier = Modifier.weight(1f).testTag("quick_action_surveillance")
                         )
                         QuickActionButton(
                             title = "Antipsychotic Review",
-                            subtitle = "GDR Compliance Playbook",
+                            subtitle = "PC review required",
                             icon = Icons.Default.Psychology,
                             onClick = { onQuickAction("Antipsychotic Review") },
                             modifier = Modifier.weight(1f).testTag("quick_action_antipsychotic")
@@ -385,14 +385,14 @@ fun DashboardScreen(
                     ) {
                         QuickActionButton(
                             title = "Today's Tasks",
-                            subtitle = "Active Agent Queue",
+                            subtitle = "Report job metadata",
                             icon = Icons.Default.SmartToy,
                             onClick = onNavigateTasks,
                             modifier = Modifier.weight(1f).testTag("quick_action_tasks")
                         )
                         QuickActionButton(
                             title = "Start Agent",
-                            subtitle = "Remote Automation",
+                            subtitle = "Not exposed remotely",
                             icon = Icons.Default.PlayArrow,
                             onClick = onNavigateTasks,
                             modifier = Modifier.weight(1f).testTag("quick_action_start_agent")
@@ -405,7 +405,7 @@ fun DashboardScreen(
                     ) {
                         QuickActionButton(
                             title = "Upload Document",
-                            subtitle = "Send PDF / Files to PC",
+                            subtitle = "Save notes & evidence",
                             icon = Icons.Default.UploadFile,
                             onClick = onNavigateVault,
                             modifier = Modifier.weight(1f).testTag("quick_action_upload")
@@ -443,26 +443,14 @@ fun DashboardScreen(
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
                 ) {
                     Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        RecentActivityItem(
-                            title = "Clinical Surveillance",
-                            status = "Complete",
-                            statusColor = CyberTeal,
-                            time = "Today, 08:30"
-                        )
-                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                        RecentActivityItem(
-                            title = "Weekly Analysis",
-                            status = "Running",
-                            statusColor = CyberCyan,
-                            time = "In Progress (68%)"
-                        )
-                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-                        RecentActivityItem(
-                            title = "Morning Report",
-                            status = "Complete",
-                            statusColor = CyberTeal,
-                            time = "Today, 07:15"
-                        )
+                        Text("Cached report metadata; check the PC for current status and results.",
+                            style = MaterialTheme.typography.labelSmall)
+                        if (tasks.isEmpty()) Text("No report jobs cached. This does not establish clinical status.",
+                            style = MaterialTheme.typography.bodySmall)
+                        tasks.take(3).forEach { task ->
+                            RecentActivityItem(title = task.title, status = task.status,
+                                statusColor = MaterialTheme.colorScheme.onSurfaceVariant, time = "Cached")
+                        }
                     }
                 }
             }
@@ -494,7 +482,7 @@ fun DashboardScreen(
                         }
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(text = "GPU VRAM Allocated:", style = MaterialTheme.typography.labelSmall)
-                            Text(text = "${nodeStats.vramUsedGb} GB / ${nodeStats.vramTotalGb} GB (RTX 4090)", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
+                            Text(text = "${nodeStats.vramUsedGb?.let { "$it GB" } ?: "Unknown"} / ${nodeStats.vramTotalGb?.let { "$it GB" } ?: "Unknown"}", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
                         }
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(text = "Transport Path:", style = MaterialTheme.typography.labelSmall)
