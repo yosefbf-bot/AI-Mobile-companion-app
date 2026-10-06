@@ -49,6 +49,14 @@ These changes affect CI/test/documentation only; the production input digest and
 local APK above are unchanged. Inspect the subsequent exact-head run for actual
 device test execution and counts.
 
+Subsequent source `1f87b07`, push run `37396619221`, found the AVD but failed
+before Android boot because its default userdata partition needed 7,372.80 MB
+while the hosted runner had only 5,848.78 MB available. Build/unit/lint still
+passed with the same 44-pass/one-fixture-skip scope. No OS-authentication pass is
+claimed. The disposable AVD now explicitly uses a 2 GiB userdata partition and
+the documented 2,048 MB emulator partition option. No phone/app data is deleted
+or resized; this changes only the newly created, account-free CI test device.
+
 - Real Android OS authentication successfully unlocks an existing/new Keystore vault; cancellation, lock, backgrounding, and five-minute expiry close it.
 - Existing v2/v3 vault upgrades preserve data, migrate the retired encryption, label old synthetic/unverified caches, and retain any unpaired queue for review. Corruption/unsupported schemas must preserve the original database.
 - External photo/file selection survives the authentication gate, restores the encrypted unsent draft, and remains an unsent preview until explicitly submitted. Pairing changes must not redirect pending evidence.
