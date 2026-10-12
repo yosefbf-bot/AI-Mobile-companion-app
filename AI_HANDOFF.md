@@ -1,3 +1,7 @@
+# Current in-progress simplification
+
+Read [the October 11 checkpoint](docs/ASSISTANT_FIRST_PROGRESS_2026-10-08.md) first. It covers simpler navigation, phone recording/PC transcription, persistent connection status, dark mode and 50 passing tests. The owner revoked the old 1% stop rule. Older acceptance reports do not establish physical-phone acceptance of these changes.
+
 # Android companion development handoff
 
 ## Current integration
@@ -117,7 +121,5 @@ bridge. Preserve OS authentication, encryption, migrations, stable retries,
 provider/privacy/resource gates and source-linked clinical review. Do not replace
 the current source with an older ZIP or make unavailable capabilities look successful.
 
-If the user's five-hour allowance reaches 1% remaining, save progress and stop.
-Follow the latest explicit resume instruction in the chat; a past one-time
-wakeup is not a recurring work schedule. Scheduling must use the app automation
+The owner revoked the former 1% stop rule. A past one-time wakeup is not a recurring work schedule. Scheduling must use the app automation
 tool and cannot be assumed successful if its request is rejected.

@@ -78,6 +78,8 @@ import com.example.ui.theme.StatusRed
 
 @Composable
 fun DashboardScreen(
+    workflows: com.example.data.model.WorkflowSnapshot,
+    onNavigateNotes: () -> Unit,
     connectionStatus: ConnectionStatus,
     lastSyncTimestamp: Long,
     isSyncing: Boolean,
@@ -96,401 +98,40 @@ fun DashboardScreen(
     onQuickAction: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val criticalAlertsCount = notifications.count { it.severity == "CRITICAL" && !it.isAcknowledged }
-    val itemsRequiringReviewCount = notifications.count { !it.isAcknowledged }
-    val activeTasksCount = tasks.count { it.status == "RUNNING" }
-
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .testTag("dashboard_screen"),
-        contentPadding = PaddingValues(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // Hero Header with Private AI Wordmark & Phoenix Logo
+    val open = workflows.actions.filter { it.status != "completed" }
+    val pendingAlerts = notifications.count { !it.isAcknowledged }
+    LazyColumn(modifier.fillMaxSize().testTag("dashboard_screen"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.surfaceVariant,
-                                MaterialTheme.colorScheme.background
-                            )
-                        )
-                    )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
-                ) {
-                    // Top row: Connection status + Lock button
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ConnectionStatusBadge(
-                            status = connectionStatus,
-                            hostIp = nodeStats.localIp,
-                            onClick = onNavigateSettings
-                        )
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
-                                onClick = onNavigateSettings,
-                                modifier = Modifier
-                                    .testTag("settings_icon_button")
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
-                                    .size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Tune,
-                                    contentDescription = "Settings",
-                                    tint = CyberTeal,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            IconButton(
-                                onClick = onLockClick,
-                                modifier = Modifier
-                                    .testTag("lock_vault_icon_button")
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f))
-                                    .size(36.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lock,
-                                    contentDescription = "Lock Secure Vault",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    // Brand Row with uploaded Phoenix Emblem & Title
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.private_ai_phoenix_icon_1790853562714),
-                            contentDescription = "Private AI Phoenix Logo",
-                            modifier = Modifier
-                                .size(54.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .border(1.5.dp, CyberTeal.copy(alpha = 0.6f), RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Column {
-                            Text(
-                                text = "PRIVATE AI",
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.Black,
-                                    letterSpacing = 1.2.sp,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                            )
-                            Text(
-                                text = "Desktop Companion • Chats & follow-ups",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = CyberTeal,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            )
-                        }
-                    }
-                }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Dashboard", style = MaterialTheme.typography.headlineMedium)
+                IconButton(onClick = onNavigateSettings, modifier = Modifier.testTag("settings_icon_button")) { Icon(Icons.Default.Tune, contentDescription = "Settings") }
+                IconButton(onClick = onLockClick, modifier = Modifier.testTag("lock_vault_icon_button")) { Icon(Icons.Default.Lock, contentDescription = "Lock") }
             }
+            ConnectionStatusBadge(status = connectionStatus, hostIp = nodeStats.localIp, onClick = onNavigateSettings)
+            Text(if (lastSyncTimestamp > 0) "Last synced: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(lastSyncTimestamp))}" else "No desktop sync yet. Counts reflect available records only.")
+            OutlinedButton(onClick = onSyncClick, enabled = !isSyncing) { Text("Refresh") }
+            if (isSyncing) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
-
-        // Sync Status Bar
         item {
-            Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                SyncBanner(
-                    lastSyncTimestamp = lastSyncTimestamp,
-                    isSyncing = isSyncing,
-                    batteryMode = batteryMode,
-                    onSyncClick = onSyncClick
-                )
-            }
+            Text("Follow-ups", style = MaterialTheme.typography.titleLarge)
+            Text("${open.size} open · $pendingAlerts alerts to review")
+            Button(onClick = onNavigateNotes) { Text("Add a note or review follow-ups") }
+            if (open.isEmpty()) Text("No follow-ups in the available records.")
         }
-
-        // Failure Handling Banner (Stage 7 Requirement)
-        if (connectionStatus == ConnectionStatus.DISCONNECTED) {
-            item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .testTag("pc_unavailable_banner"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = StatusRed.copy(alpha = 0.12f)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, StatusRed.copy(alpha = 0.5f))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, contentDescription = "Disconnected", tint = StatusRed)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Private AI PC unavailable",
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = StatusRed)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Possible causes:\n" +
-                                    "• Not connected to work Wi-Fi\n" +
-                                    "• Work VPN not connected\n" +
-                                    "• PC turned off or Private AI closed\n" +
-                                    "• Companion Gateway disabled or Windows Firewall blocking",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 16.sp)
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = onSyncClick,
-                                colors = ButtonDefaults.buttonColors(containerColor = StatusRed),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                modifier = Modifier.height(34.dp)
-                            ) {
-                                Text("Retry", fontSize = 12.sp)
-                            }
-                            OutlinedButton(
-                                onClick = onNavigateSettings,
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                modifier = Modifier.height(34.dp)
-                            ) {
-                                Text("Connection Diagnostics", fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
-            }
+        items(open.take(20), key = { it.id }) { action ->
+            Card(Modifier.fillMaxWidth().clickable(onClick = onNavigateNotes)) { Column(Modifier.padding(16.dp)) {
+                Text(action.title, style = MaterialTheme.typography.titleMedium)
+                Text(action.owner.ifBlank { "Unassigned" })
+                Text(action.dueAt?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "No deadline")
+            } }
         }
-
-        // Executive / Admin Summary Triage Cards
         item {
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text(
-                    text = "Executive Overview",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    // Critical Alerts card
-                    ExecutiveStatCard(
-                        title = "Cached Critical",
-                        value = "$criticalAlertsCount",
-                        subtext = if (criticalAlertsCount > 0) "Review on desktop" else "Not an all-clear",
-                        indicatorColor = if (criticalAlertsCount > 0) StatusRed else MaterialTheme.colorScheme.onSurfaceVariant,
-                        icon = Icons.Default.Warning,
-                        onClick = onNavigateAlerts,
-                        modifier = Modifier.weight(1f).testTag("stat_critical_alerts")
-                    )
-
-                    // Items Requiring Review card
-                    ExecutiveStatCard(
-                        title = "Cached Review",
-                        value = "$itemsRequiringReviewCount",
-                        subtext = "Cached unread items",
-                        indicatorColor = if (itemsRequiringReviewCount > 0) StatusAmber else MaterialTheme.colorScheme.onSurfaceVariant,
-                        icon = Icons.Default.LocalHospital,
-                        onClick = onNavigateAlerts,
-                        modifier = Modifier.weight(1f).testTag("stat_review_items")
-                    )
-
-                    // Active Tasks card
-                    ExecutiveStatCard(
-                        title = "Cached Running",
-                        value = "$activeTasksCount",
-                        subtext = "Last reported status",
-                        indicatorColor = CyberCyan,
-                        icon = Icons.Default.SmartToy,
-                        onClick = onNavigateTasks,
-                        modifier = Modifier.weight(1f).testTag("stat_active_tasks")
-                    )
-                }
-            }
+            Text("Alerts", style = MaterialTheme.typography.titleLarge)
+            OutlinedButton(onClick = onNavigateAlerts) { Text("Review alerts ($pendingAlerts)") }
+            Text("No recorded alerts does not establish complete monitoring.")
         }
-
-        // Quick Actions (Matching ChatGPT Brief Exactly)
         item {
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text(
-                    text = "Quick Actions",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        QuickActionButton(
-                            title = "Ask Private AI",
-                            subtitle = "Local & Hybrid Chat",
-                            icon = Icons.Default.AddComment,
-                            onClick = onNavigateChats,
-                            modifier = Modifier.weight(1f).testTag("quick_action_ask")
-                        )
-                        QuickActionButton(
-                            title = "Morning Briefing",
-                            subtitle = "PC review required",
-                            icon = Icons.Default.Assignment,
-                            onClick = { onQuickAction("Morning Administrator Brief") },
-                            modifier = Modifier.weight(1f).testTag("quick_action_morning_brief")
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        QuickActionButton(
-                            title = "Run Surveillance",
-                            subtitle = "PC review required",
-                            icon = Icons.Default.LocalHospital,
-                            onClick = { onQuickAction("Daily Clinical Surveillance") },
-                            modifier = Modifier.weight(1f).testTag("quick_action_surveillance")
-                        )
-                        QuickActionButton(
-                            title = "Antipsychotic Review",
-                            subtitle = "PC review required",
-                            icon = Icons.Default.Psychology,
-                            onClick = { onQuickAction("Antipsychotic Review") },
-                            modifier = Modifier.weight(1f).testTag("quick_action_antipsychotic")
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        QuickActionButton(
-                            title = "Today's Tasks",
-                            subtitle = "Report job metadata",
-                            icon = Icons.Default.SmartToy,
-                            onClick = onNavigateTasks,
-                            modifier = Modifier.weight(1f).testTag("quick_action_tasks")
-                        )
-                        QuickActionButton(
-                            title = "Start Agent",
-                            subtitle = "Not exposed remotely",
-                            icon = Icons.Default.PlayArrow,
-                            onClick = onNavigateTasks,
-                            modifier = Modifier.weight(1f).testTag("quick_action_start_agent")
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        QuickActionButton(
-                            title = "Upload Document",
-                            subtitle = "Save notes & evidence",
-                            icon = Icons.Default.UploadFile,
-                            onClick = onNavigateVault,
-                            modifier = Modifier.weight(1f).testTag("quick_action_upload")
-                        )
-                    }
-                }
-            }
-        }
-
-        // Recent Activity
-        item {
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Recent Activity",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = "View All Tasks",
-                        style = MaterialTheme.typography.labelSmall.copy(color = CyberTeal, fontWeight = FontWeight.Bold),
-                        modifier = Modifier.clickable(onClick = onNavigateTasks)
-                    )
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Cached report metadata; check the PC for current status and results.",
-                            style = MaterialTheme.typography.labelSmall)
-                        if (tasks.isEmpty()) Text("No report jobs cached. This does not establish clinical status.",
-                            style = MaterialTheme.typography.bodySmall)
-                        tasks.take(3).forEach { task ->
-                            RecentActivityItem(title = task.title, status = task.status,
-                                statusColor = MaterialTheme.colorScheme.onSurfaceVariant, time = "Cached")
-                        }
-                    }
-                }
-            }
-        }
-
-        // Workstation Node Hardware Telemetry
-        item {
-            Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text(
-                    text = "Windows Workstation Telemetry",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Host Node:", style = MaterialTheme.typography.labelSmall)
-                            Text(text = nodeStats.serverName, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Primary Model:", style = MaterialTheme.typography.labelSmall)
-                            Text(text = nodeStats.loadedModel, style = MaterialTheme.typography.labelSmall.copy(color = CyberTeal, fontWeight = FontWeight.Bold))
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "GPU VRAM Allocated:", style = MaterialTheme.typography.labelSmall)
-                            Text(text = "${nodeStats.vramUsedGb?.let { "$it GB" } ?: "Unknown"} / ${nodeStats.vramTotalGb?.let { "$it GB" } ?: "Unknown"}", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Transport Path:", style = MaterialTheme.typography.labelSmall)
-                            Text(text = "LAN / VPN Direct Gateway", style = MaterialTheme.typography.labelSmall.copy(color = CyberCyan))
-                        }
-                    }
-                }
-            }
+            OutlinedButton(onClick = onNavigateTasks) { Text("Background tasks (${tasks.count { it.status == "RUNNING" }})") }
         }
     }
 }

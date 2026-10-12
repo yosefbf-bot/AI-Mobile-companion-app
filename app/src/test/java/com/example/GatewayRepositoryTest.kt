@@ -200,7 +200,8 @@ class GatewayRepositoryTest {
         assertNotNull(user.attemptedAt)
         assertFalse(user.requireLocal)
         assertTrue(actionReads.get() > 0)
-        assertNotNull(repository.lastSyncTimestamp.value.takeIf { it > 0 })
+        assertEquals(0L, repository.lastSyncTimestamp.value) // A partial refresh is not a successful sync.
+        assertTrue(repository.lastConnectionCheck.value > 0)
     }
 
     @Test fun neverAttemptedOfflineRequestCanAdoptStricterPrivacyBeforeItsFirstSend() = runBlocking {
@@ -248,7 +249,8 @@ class GatewayRepositoryTest {
         val sync = repository.triggerSync()
         assertFalse(sync.success)
         assertTrue(actionReads.get() > 0)
-        assertTrue(repository.lastSyncTimestamp.value > 0)
+        assertEquals(0L, repository.lastSyncTimestamp.value) // Failed delivery must not advance the successful-sync time.
+        assertTrue(repository.lastConnectionCheck.value > 0)
         assertEquals(1,database.chatDao().getQueuedOfflineMessages().size)
         assertTrue(repository.getMessagesForSession(session).first().none { it.sender == "assistant" })
     }
@@ -401,5 +403,22 @@ class GatewayRepositoryTest {
         val alerts = DesktopNodeService.parseAlerts(JSONObject("""{"alerts":[{"id":"synthetic-alert","severity":"high","status":"open","category":null}]}"""))
         assertEquals(0L,alerts.single().timestamp)
         assertTrue(alerts.single().message.contains("empty list is not an all-clear"))
+    }
+
+    @Test fun lastSuccessfulSyncSurvivesOfflineReopenAndDoesNotFollowNewPairing() = runBlocking {
+        repository.onUnlocked().join()
+        assertTrue(repository.triggerSync().success)
+        val saved = repository.lastSyncTimestamp.value
+        assertTrue(saved > 0)
+        allowStatus = false
+        assertFalse(repository.checkConnection())
+        assertEquals(saved, repository.lastSyncTimestamp.value)
+        repository.onLocked();repository.onUnlocked().join()
+        assertEquals(saved, repository.lastSyncTimestamp.value)
+        assertEquals(ConnectionStatus.DISCONNECTED, repository.connectionStatus.value)
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = SecureConfigStore(context,cipher)
+        assertEquals(0L, store.lastSync(config.copy(pairKey="B".repeat(43))))
+        assertEquals(0L, store.lastSync(config.copy(simulatedNodeEnabled=true)))
     }
 }

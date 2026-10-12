@@ -35,7 +35,7 @@ fun FacilityCaptureScreen(
     val context = LocalContext.current
     val restored = remember { unsentForm(loadUnsentDraft()) }
     var note by remember { mutableStateOf(restored.optString("note")) }
-    var kind by remember { mutableStateOf(restored.optString("kind", "round")) }
+    var kind by remember { mutableStateOf(restored.optString("kind", "note")) }
     var location by remember { mutableStateOf(restored.optString("location")) }
     var owner by remember { mutableStateOf(restored.optString("owner")) }
     var deadline by remember { mutableStateOf(restored.optString("deadline")) }
@@ -57,6 +57,7 @@ fun FacilityCaptureScreen(
     val dictate = rememberOnDeviceDictation { note = if (note.isBlank()) it else "$note $it" }
     LaunchedEffect(form) { onUnsentDraftChange(form) }
     LaunchedEffect(incomingEvidence) { incomingEvidence?.let { evidence = it; onConsumeEvidence() } }
+    var manualDetails by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
     var selectedAction by remember { mutableStateOf<WorkflowAction?>(null) }
     var selectedDraft by remember { mutableStateOf<WorkflowDraft?>(null) }
@@ -75,8 +76,8 @@ fun FacilityCaptureScreen(
                 TextButton(onClick = onBack) { Text("Back") }
                 Button(onClick = onRefresh, enabled = !busy) { Text("Refresh desktop") }
             }
-            Text("Rounds, notes and follow-ups", style = MaterialTheme.typography.headlineSmall)
-            Text("The desktop saves review proposals in its Action Center. Missing owners and dates remain unknown. Photos are evidence for review; the text model does not interpret them.")
+            Text("Notes", style = MaterialTheme.typography.headlineSmall)
+            Text("Write a note. Review suggested follow-ups below. Photos are saved as evidence.")
             (localError ?: error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         }
@@ -84,12 +85,14 @@ fun FacilityCaptureScreen(
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Capture a note", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(note, { note = it }, label = { Text("What’s on your mind?") }, minLines = 3, modifier = Modifier.fillMaxWidth().testTag("capture_note"))
+                    TextButton(onClick = dictate, enabled = !busy) { Text("Dictate on device") }
+                    TextButton(onClick = { manualDetails = !manualDetails }, modifier = Modifier.testTag("capture_details")) { Text(if (manualDetails) "Hide details" else "Details (optional)") }
+                    if (manualDetails) {
                     Row { listOf("round","note","reminder").forEach { value ->
                         FilterChip(selected = kind == value, onClick = { kind = value }, label = { Text(value.replaceFirstChar(Char::uppercase)) })
                         Spacer(Modifier.width(6.dp))
                     } }
-                    OutlinedTextField(note, { note = it }, label = { Text("What did you observe or want to follow up?") }, minLines = 3, modifier = Modifier.fillMaxWidth().testTag("capture_note"))
-                    TextButton(onClick = dictate, enabled = !busy) { Text("Dictate on device") }
                     OutlinedTextField(location, { location = it }, label = { Text("Location, if known") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(owner, { owner = it }, label = { Text("Responsible person, if known") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(deadline, { deadline = it }, label = { Text("Due date/time: yyyy-MM-dd HH:mm (phone time zone)") }, modifier = Modifier.fillMaxWidth())
@@ -100,6 +103,7 @@ fun FacilityCaptureScreen(
                         FilterChip(channel == "whatsapp", { channel = if (channel == "whatsapp") null else "whatsapp" }, label = { Text("WhatsApp draft") })
                     }
                     Text("A draft is stored for review. Saving it does not send a message.")
+                    }
                     Row {
                         OutlinedButton(onClick = { onPickEvidence?.invoke("*/*") ?: filePicker.launch("*/*") }, enabled = !busy) { Text("Attach evidence") }
                         Spacer(Modifier.width(8.dp))
@@ -117,7 +121,7 @@ fun FacilityCaptureScreen(
                             submittedForm = form to lastSavedCaptureId
                             onCapture(note, kind, location, owner, due, channel, evidence)
                         } catch (_: Exception) { localError = "Enter a note and a valid due date/time, or leave the date blank." }
-                    }, enabled = !busy && note.isNotBlank(), modifier = Modifier.testTag("capture_save")) { Text("Save for desktop review") }
+                    }, enabled = !busy && note.isNotBlank(), modifier = Modifier.testTag("capture_save")) { Text("Save note") }
                 }
             }
         }

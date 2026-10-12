@@ -40,8 +40,13 @@ fun ConnectionStatusBadge(
     status: ConnectionStatus,
     hostIp: String,
     onClick: () -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    lastCheckedAt: Long? = null
 ) {
+    val now by androidx.compose.runtime.produceState(System.currentTimeMillis()) {
+        while(true){ kotlinx.coroutines.delay(30_000); value = System.currentTimeMillis() }
+    }
+    val stale = status == ConnectionStatus.CONNECTED && lastCheckedAt != null && now - lastCheckedAt > 90_000
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.85f,
@@ -64,9 +69,9 @@ fun ConnectionStatusBadge(
             isPulsing = false
         }
         ConnectionStatus.CONNECTED -> {
-            ledColor = StatusGreen
-            statusText = "Desktop Online"
-            isPulsing = true
+            ledColor = if(stale) StatusAmber else StatusGreen
+            statusText = if(stale) "Connection not checked recently" else "Connected to PC"
+            isPulsing = !stale
         }
         ConnectionStatus.DISCONNECTED -> {
             ledColor = StatusRed
