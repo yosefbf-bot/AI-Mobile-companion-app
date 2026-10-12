@@ -1,3 +1,7 @@
+## October 12 device acceptance: Dashboard assertion correction
+
+Hosted run 38238022399 compiled, passed unit/lint and executed four device tests. Keeping the emulator awake resolved the missing UI hierarchy; three tests passed. The remaining real OS-authentication test successfully unlocked Keystore and reached Dashboard, then expected an obsolete label. It now asserts the current explicit warning that no recorded alerts does not establish complete monitoring. Production UI/security is unchanged. Fresh exact-head device acceptance and artifact upload remain required; full remote artifact storage is still blocked pending cleanup authorization.
+
 ## October 12 hosted acceptance follow-up
 
 The owner authorized merging both reviewed mains and deleting superseded branches only after completion, preserving unique work. Source 28a6fe1 passed hosted compilation/unit/lint, but device acceptance had two UI failures (no Compose hierarchy), not a passing emulator result. The next run keeps the disposable emulator awake, exposes failure diagnostics even when artifact storage is full, and explicitly opens Dashboard after the new Chat default. Production authentication/security is unchanged. Full hosted device acceptance remains pending.

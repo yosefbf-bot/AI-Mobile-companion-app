@@ -51,8 +51,9 @@ class OsCredentialKeystoreAcceptanceTest {
         rule.onNodeWithTag("nav_home").assertIsDisplayed()
         // Chat is now the initial workspace; Dashboard remains explicit navigation.
         rule.onNodeWithTag("nav_home").performClick()
-        rule.onNodeWithTag("dashboard_screen").performScrollToNode(hasText("Not an all-clear"))
-        rule.onNodeWithText("Not an all-clear").assertIsDisplayed()
+        val coverageWarning = "No recorded alerts does not establish complete monitoring."
+        rule.onNodeWithTag("dashboard_screen").performScrollToNode(hasText(coverageWarning))
+        rule.onNodeWithText(coverageWarning).assertIsDisplayed()
         rule.onNodeWithText("All clear").assertDoesNotExist()
         rule.onNodeWithText("Running on PC").assertDoesNotExist()
         rule.onNodeWithTag("notes_followups_button").performClick()
