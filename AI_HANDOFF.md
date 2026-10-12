@@ -1,3 +1,15 @@
+## October 12 intermittent device lifecycle investigation
+
+Source 4a1dd87 passed all four device tests in push run 38239708086, while PR run
+38239713135 crashed in Compose SlotTable disposal. This is unresolved, not a
+passing acceptance claim. The OS-authentication/Notes/relock case now repeats
+three times and logs the original test exception before rule teardown. CI keeps
+continuous synthetic-device logcat to preserve the first error. Production code,
+authentication, dependencies and existing data are unchanged by this diagnostic
+commit. The approved 26 old CI archives were backed up, verified and removed;
+GitHub still reports artifact quota pending recalculation. Do not merge a known
+failing head. Current workspace instructions leave main merging to the owner.
+
 ## October 12 device acceptance: Dashboard assertion correction
 
 Hosted run 38238022399 compiled, passed unit/lint and executed four device tests. Keeping the emulator awake resolved the missing UI hierarchy; three tests passed. The remaining real OS-authentication test successfully unlocked Keystore and reached Dashboard, then expected an obsolete label. It now asserts the current explicit warning that no recorded alerts does not establish complete monitoring. Production UI/security is unchanged. Fresh exact-head device acceptance and artifact upload remain required; full remote artifact storage is still blocked pending cleanup authorization.
