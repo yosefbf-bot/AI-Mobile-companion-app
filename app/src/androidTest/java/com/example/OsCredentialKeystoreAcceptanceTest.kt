@@ -20,18 +20,29 @@ import com.example.data.crypto.EncryptionManager
 import com.example.data.crypto.VaultUnavailableException
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /** Real OS prompt and Android Keystore, only on an explicitly configured disposable test device. */
-@OptIn(ExperimentalTestApi::class)
+@OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)
 @RunWith(AndroidJUnit4::class)
 class OsCredentialKeystoreAcceptanceTest {
+    private val composeDispatcher = StandardTestDispatcher()
     // The unconfined default can resume composition on a repository IO emitter.
     // Queue through the Compose test clock so Android view work stays on main.
-    @get:Rule val rule = createAndroidComposeRule<MainActivity>(effectContext = StandardTestDispatcher())
+    @get:Rule val rule = createAndroidComposeRule<MainActivity>(effectContext = composeDispatcher)
+
+    @After fun finishActivityAndDrainLifecycleCleanup() {
+        // Compose 1.7.2's final runTest cleanup drains its scheduler on the test
+        // thread. Destroy the real activity first, then finish canceled lifecycle
+        // effects on Android main before that framework cleanup runs.
+        rule.activityRule.scenario.close()
+        rule.runOnUiThread { composeDispatcher.scheduler.runCurrent() }
+    }
 
     private var phase = "startup"
 

@@ -1,3 +1,28 @@
+## October 12 follow-up: complete real activity cleanup on main
+
+Both ca1d6ea hosted runs (38307718223 and 38307723181) passed three actual OS
+PIN/Keystore unlock/Dashboard/Notes/relock cycles. Both still failed the test during
+framework teardown: repeatOnLifecycle removed observers on the instrumentation
+thread when Compose 1.7.2 withTestCoroutines called TestScope.runTest to drain
+cancellations. This is a failed device acceptance result, despite passing test-body
+assertions; the earlier wrong-thread composition crash did not recur.
+
+The follow-up explicitly closes the real ActivityScenario and drains the queued
+lifecycle cleanup on Android main in @After, before Compose's final test-scope
+cleanup. Exceptions and assertions are preserved. The screen-only regression now
+uses the same lifecycle-aware collection as MainActivity. No production code,
+runtime version, APK, authentication or encryption change. Local validation of
+this follow-up passed all 51 tests (zero failures/errors/skips), real desktop
+pinned-HTTPS interoperability, lint (zero errors/73 warnings), app and test APK
+builds. Production APK SHA-256 remains 4b3ea024d6d748a382682587834f1d5bf7168c7f83812b2c786828c79fb91425.
+Evidence: desktop ignored Validation/assistant-first-2026-10-07/android-lifecycle-cleanup.log
+and the matching Gradle XML. Fresh hosted device verification remains required.
+
+Desktop f7777a5 passed both exact-head regression/dependency/build checks; only
+artifact retention failed on account quota. All 26 approved old archives remain
+verified in recovery and removed remotely. Current instructions leave main merging
+to the owner. Preserve both draft PRs until remaining checks pass.
+
 ## October 12 original device failure identified: test dispatcher
 
 Diagnostic PR run 38274513926 reproduced the crash on the third authentication

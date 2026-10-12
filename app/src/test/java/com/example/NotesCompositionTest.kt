@@ -2,7 +2,7 @@ package com.example
 
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.SideEffect
 import android.os.Looper
@@ -38,7 +38,7 @@ class NotesCompositionTest {
         var savedForm = ""
         rule.setContent {
             MyApplicationTheme {
-                val showing by visible.collectAsState()
+                val showing by visible.collectAsStateWithLifecycle()
                 SideEffect { assertSame(Looper.getMainLooper(), Looper.myLooper()) }
                 if (showing) FacilityCaptureScreen(
                     snapshot = WorkflowSnapshot(), busy = busy.value, error = null,
