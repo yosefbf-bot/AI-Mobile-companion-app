@@ -2,6 +2,7 @@ package com.example
 
 import android.app.KeyguardManager
 import android.util.Log
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -19,14 +20,18 @@ import com.example.data.crypto.EncryptionManager
 import com.example.data.crypto.VaultUnavailableException
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
+import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /** Real OS prompt and Android Keystore, only on an explicitly configured disposable test device. */
+@OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class OsCredentialKeystoreAcceptanceTest {
-    @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+    // The unconfined default can resume composition on a repository IO emitter.
+    // Queue through the Compose test clock so Android view work stays on main.
+    @get:Rule val rule = createAndroidComposeRule<MainActivity>(effectContext = StandardTestDispatcher())
 
     private var phase = "startup"
 
@@ -72,6 +77,7 @@ class OsCredentialKeystoreAcceptanceTest {
         // Chat is now the initial workspace; Dashboard remains explicit navigation.
         phase = "open Dashboard"
         rule.onNodeWithTag("nav_home").performClick()
+        rule.waitUntil(20_000) { rule.onAllNodesWithTag("dashboard_screen").fetchSemanticsNodes().isNotEmpty() }
         val coverageWarning = "No recorded alerts does not establish complete monitoring."
         rule.onNodeWithTag("dashboard_screen").performScrollToNode(hasText(coverageWarning))
         rule.onNodeWithText(coverageWarning).assertIsDisplayed()
@@ -79,12 +85,14 @@ class OsCredentialKeystoreAcceptanceTest {
         rule.onNodeWithText("Running on PC").assertDoesNotExist()
         phase = "open Notes"
         rule.onNodeWithTag("notes_followups_button").performClick()
+        rule.waitUntil(20_000) { rule.onAllNodesWithTag("facility_capture_screen").fetchSemanticsNodes().isNotEmpty() }
         rule.onNodeWithTag("facility_capture_screen").assertIsDisplayed()
         // Closing application access must invalidate reads even inside the OS authentication window.
         phase = "relock from Notes"
         EncryptionManager.lock()
         assertTrue(EncryptionManager.accessGeneration > unlockedGeneration)
         assertThrows(VaultUnavailableException::class.java) { EncryptionManager.decrypt(protected) }
+        rule.waitUntil(20_000) { rule.onAllNodesWithTag("biometric_lock_card").fetchSemanticsNodes().isNotEmpty() }
         rule.onNodeWithTag("biometric_lock_card").assertIsDisplayed()
         rule.onNodeWithTag("facility_capture_screen").assertDoesNotExist()
         Log.i("PrivateAIAcceptance", "Relock accepted")

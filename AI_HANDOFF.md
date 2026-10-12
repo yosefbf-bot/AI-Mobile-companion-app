@@ -1,3 +1,32 @@
+## October 12 original device failure identified: test dispatcher
+
+Diagnostic PR run 38274513926 reproduced the crash on the third authentication
+cycle. Its first exception is CalledFromWrongThreadException: the Compose test
+frame clock resumed Android view work on DefaultDispatcher-worker-4 after the
+repository emitted vaultReady from its IO scope. The SlotTable disposal exception
+was secondary. The push run passed all three cycles, explaining the intermittency.
+
+The narrow correction supplies StandardTestDispatcher to both Android Compose
+rules and the Notes screen regression; only the Android test configuration gains
+kotlinx-coroutines-test. Production code, runtime dependencies, UI authentication,
+Keystore and data remain unchanged. The exact installed Compose 1.7.2 source
+supports this dispatcher override. Google's guidance explains the unconfined
+versus queued test behavior: https://developer.android.com/develop/ui/compose/testing/migrate-v2
+No Compose/runtime upgrade or relaxed assertion is required. The real OS PIN and
+three unlock/Dashboard/Notes/relock cycles remain mandatory.
+
+Local validation after this correction passed all 51 tests with no failures,
+errors or skips, including the real synthetic Node Core/SQLite pinned-HTTPS
+interoperability and ten Notes disposal/restoration cycles with background state
+emission. Lint has zero errors/73 warnings; both app and test APKs build. The app
+APK remains byte-for-byte unchanged (SHA-256 4b3ea024d6d748a382682587834f1d5bf7168c7f83812b2c786828c79fb91425).
+Evidence: desktop ignored Validation/assistant-first-2026-10-07/android-dispatcher-final-2.log
+and the matching Gradle XML reports. Two earlier local runs exposed missing waits
+in this new regression; they remain recorded as failed runs. The corrected test
+waits for the draft-save effect and each UI transition without removing assertions.
+Fresh hosted device results remain required. Current workspace instructions leave
+main merging to the owner; preserve the review branch until integration.
+
 ## October 12 intermittent device lifecycle investigation
 
 Source 4a1dd87 passed all four device tests in push run 38239708086, while PR run

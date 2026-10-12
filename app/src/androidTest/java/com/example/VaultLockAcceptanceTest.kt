@@ -1,6 +1,7 @@
 package com.example
 
 import android.view.WindowManager
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -9,14 +10,18 @@ import com.example.data.crypto.BiometricAuthManager
 import com.example.data.crypto.EncryptionManager
 import com.example.data.crypto.VaultUnavailableException
 import org.junit.Assert.*
+import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
 /** Executes Android UI and Keystore fail-closed behavior; successful OS authentication is a separate device acceptance gate. */
+@OptIn(ExperimentalTestApi::class)
 @RunWith(AndroidJUnit4::class)
 class VaultLockAcceptanceTest {
-    @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+    // The unconfined default can resume composition on a repository IO emitter.
+    // Queue through the Compose test clock so Android view work stays on main.
+    @get:Rule val rule = createAndroidComposeRule<MainActivity>(effectContext = StandardTestDispatcher())
 
     @Test fun startupKeepsSensitiveNavigationUncomposedBehindDeviceAuthentication() {
         rule.onNodeWithTag("biometric_lock_card").assertIsDisplayed()
