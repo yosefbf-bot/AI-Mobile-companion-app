@@ -49,6 +49,8 @@ class OsCredentialKeystoreAcceptanceTest {
         assertEquals("Synthetic emulator acceptance note", EncryptionManager.decrypt(protected))
         rule.waitUntil(20_000) { rule.onAllNodesWithTag("nav_home").fetchSemanticsNodes().isNotEmpty() }
         rule.onNodeWithTag("nav_home").assertIsDisplayed()
+        // Chat is now the initial workspace; Dashboard remains explicit navigation.
+        rule.onNodeWithTag("nav_home").performClick()
         rule.onNodeWithTag("dashboard_screen").performScrollToNode(hasText("Not an all-clear"))
         rule.onNodeWithText("Not an all-clear").assertIsDisplayed()
         rule.onNodeWithText("All clear").assertDoesNotExist()

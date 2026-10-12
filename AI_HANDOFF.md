@@ -1,3 +1,7 @@
+## October 12 hosted acceptance follow-up
+
+The owner authorized merging both reviewed mains and deleting superseded branches only after completion, preserving unique work. Source 28a6fe1 passed hosted compilation/unit/lint, but device acceptance had two UI failures (no Compose hierarchy), not a passing emulator result. The next run keeps the disposable emulator awake, exposes failure diagnostics even when artifact storage is full, and explicitly opens Dashboard after the new Chat default. Production authentication/security is unchanged. Full hosted device acceptance remains pending.
+
 # Current in-progress simplification
 
 Read [the October 11 checkpoint](docs/ASSISTANT_FIRST_PROGRESS_2026-10-08.md) first. It covers simpler navigation, phone recording/PC transcription, persistent connection status, dark mode and 50 passing tests. The owner revoked the old 1% stop rule. Older acceptance reports do not establish physical-phone acceptance of these changes.

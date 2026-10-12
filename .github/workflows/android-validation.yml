@@ -83,6 +83,11 @@ jobs:
             sleep 3
           done
           test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          # Keep only this disposable emulator awake while Gradle prepares the tests.
+          # This does not remove its OS PIN or change application authentication.
+          adb shell svc power stayon true
+          adb shell settings put system screen_off_timeout 1800000
+          adb shell input keyevent 224
           adb shell input keyevent 82
           # This PIN belongs only to this disposable, account-free CI emulator.
           adb shell locksettings set-pin 846219
@@ -100,6 +105,9 @@ jobs:
             adb shell uiautomator dump /sdcard/privateai-ci-window.xml >/dev/null 2>&1 || true
             adb pull /sdcard/privateai-ci-window.xml app/build/reports/ci-emulator/window.xml >/dev/null 2>&1 || true
             adb logcat -d -t 1200 >app/build/reports/ci-emulator/logcat.txt || true
+            # Keep actionable synthetic-device diagnostics even if artifact storage is full.
+            cat app/build/reports/ci-emulator/window.xml || true
+            grep -E 'FATAL EXCEPTION|AndroidRuntime|am_crash|MainActivity|keyguard|Keyguard' app/build/reports/ci-emulator/logcat.txt | tail -n 100 || true
           fi
       - name: Hash debug candidate
         if: success()
