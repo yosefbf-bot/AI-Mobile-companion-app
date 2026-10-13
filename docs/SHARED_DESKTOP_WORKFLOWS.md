@@ -57,11 +57,10 @@ sync reports the outstanding failures instead of claiming every request succeede
 
 ## Notes, rounds, reminders and evidence
 
-Open **Notes & follow-ups**. Enter your observation, optional location and owner,
-and an explicit due date/time if known. Blank fields remain unknown. Choose an
+Open **Notes** and type the observation. Optional location, owner, deadline and draft-channel fields are collapsed under Details. Blank fields remain unknown. Choose an
 Outlook or WhatsApp review draft if needed, then save for desktop review.
 
-The PC creates source-linked operational review actions in the same Action Center.
+The PC creates source-linked operational review actions in the same Dashboard.
 Review the proposed action, supply missing details and enter a completion note
 before marking it complete. An operational completion does not establish a
 clinical resolution. Changes use the exact server revision and fail when another
@@ -80,7 +79,7 @@ Process termination can discard unsent forms or pending picker results; saved
 notes/requests survive in encrypted storage. Select evidence again after repairing
 to a different desktop. A submitted note or evidence preview clears after its
 durable phone save when you have not edited it meanwhile. Later network/metadata
-failures do not erase that save or imply you should submit a duplicate. The Files
+failures do not erase that save or imply you should submit a duplicate. The Library
 view shows pending and review-required records as well as desktop receipts.
 The manual-note **Share** button explicitly exports decrypted text to the Android
 app you choose. It is a separate user action outside the protected desktop gateway;
@@ -173,3 +172,43 @@ camera/picker reauthentication, local microphone recognition, notification
 permission and background delivery. Live WhatsApp/Outlook account and real-data
 clinical acceptance are separate checks. Do not claim these passed from compilation
 or Robolectric alone.
+
+
+## Simplified companion — October 11, 2026
+
+Chat opens by default. Dashboard is the single overview; Notes, Meetings and Library
+are the other primary destinations. Settings contains connection and privacy controls.
+Settings → Appearance saves Follow system, Light or Dark on this phone, including the
+locked screen. This non-sensitive preference is separate from protected workspace data.
+
+A compact connection badge and last successful sync time appear on the main screens.
+Green means a recent successful connection check; red indicates disconnected; amber
+means checking/syncing or a check older than 90 seconds. Tap to check/sync. Last sync
+means a fully successful refresh/delivery pass, not a partial result. Its encrypted
+receipt survives reopening for the same pairing, and is cleared from view when locked,
+in Demo or after re-pairing. Cached time never proves the PC is currently online.
+
+In Meetings, create a recording, allow microphone access and keep the screen open and
+phone unlocked. Native PCM recording does not use an online speech service. Audio is
+saved in encrypted bounded chunks; the paired PC performs offline transcription and
+prepares draft minutes and follow-ups. Missing PC speech assets leave the recording
+pending. The desktop requires a one-time verified runtime/model download before offline
+transcription. Review transcript accuracy, deadlines and speakers before acting.
+
+Pause/Resume retains committed audio. Finish waits for the exact acknowledged audio
+count, then requests desktop processing. Lock, navigation, backgrounding and authentication
+timeout stop recording; up to 20 seconds not yet committed can be lost. There is no
+background microphone service or authentication bypass. A recording is limited to 60
+minutes; 512 MiB of pending audio is allowed. Automatic speaker diarization is not
+implemented; desktop attribution review remains available.
+
+The wire extension is documented in the desktop `ANDROID_COMPANION_CONTRACT.md`.
+It requires the `meetings` capability and Workflow scope; stable IDs, per-pairing replay,
+SHA-256 acknowledgments, certificate validation and encrypted pending records remain.
+A reused bounded HTTP connection pool prevents bursts of audio/chat/refresh requests
+from exhausting the desktop's 24-connection limit. Certificate validity is still checked
+for every request, including when the pool is reused.
+
+Every Outlook/WhatsApp send or delete requires desktop/user confirmation. Outgoing
+WhatsApp results and reminders wait for approval; the phone cannot approve them remotely.
+Internal drafts and operational completion are not external sends or clinical closure.

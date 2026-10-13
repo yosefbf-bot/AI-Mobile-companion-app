@@ -30,6 +30,14 @@ class PrivateAIRepository(
     private val documentDao get() = selectedDatabase.value.documentDao()
     private val taskDao get() = selectedDatabase.value.taskDao()
     private val workflows = SharedWorkflowService(nodeService)
+    private val meetingOutbox = MeetingOutbox(database, cipher)
+    private val meetingDelivery = Mutex()
+    private val _phoneMeetings = MutableStateFlow<List<PhoneMeeting>>(emptyList())
+    val phoneMeetings = _phoneMeetings.asStateFlow()
+    private val _desktopMeetings = MutableStateFlow<List<DesktopMeeting>>(emptyList())
+    val desktopMeetings = _desktopMeetings.asStateFlow()
+    private val _meetingPending = MutableStateFlow(0)
+    val meetingPending = _meetingPending.asStateFlow()
     private val delivery = Mutex()
     private val sync = Mutex()
     private var opening: Job? = null
@@ -40,6 +48,8 @@ class PrivateAIRepository(
     val vaultReady = _vaultReady.asStateFlow()
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.DISCONNECTED)
     val connectionStatus = _connectionStatus.asStateFlow()
+    private val _lastConnectionCheck = MutableStateFlow(0L)
+    val lastConnectionCheck = _lastConnectionCheck.asStateFlow()
     private val _lastSyncTimestamp = MutableStateFlow(0L)
     val lastSyncTimestamp = _lastSyncTimestamp.asStateFlow()
     private val _nodeConfig = MutableStateFlow(DesktopNodeConfig())
@@ -75,6 +85,7 @@ class PrivateAIRepository(
             database.migrateLegacyContent(cipher)
             _nodeConfig.value = configStore?.load() ?: _nodeConfig.value
             selectWorkspace()
+            _lastSyncTimestamp.value = configStore?.lastSync(_nodeConfig.value) ?: 0
             selectedDatabase.value.migrateLegacyContent(cipher)
             ensureActive()
             check(generation == workspaceGeneration)
@@ -104,7 +115,9 @@ class PrivateAIRepository(
         _connectionStatus.value = ConnectionStatus.DISCONNECTED
         _nodeStats.value = NodeStats()
         _workflowState.value = WorkflowSnapshot()
+        _phoneMeetings.value = emptyList(); _desktopMeetings.value = emptyList(); _meetingPending.value = 0
         _lastSyncTimestamp.value = 0
+        _lastConnectionCheck.value = 0
         _isSyncing.value = false
     }
 
@@ -143,6 +156,7 @@ class PrivateAIRepository(
         if (!newConfig.simulatedNodeEnabled) configStore?.save(newConfig)
         _nodeConfig.value = newConfig
         _workflowState.value = WorkflowSnapshot(); _lastSyncTimestamp.value = 0
+        _phoneMeetings.value = emptyList(); _desktopMeetings.value = emptyList(); _meetingPending.value = 0
         _connectionStatus.value = ConnectionStatus.DISCONNECTED; _nodeStats.value = NodeStats()
         _vaultReady.value = false
         selectWorkspace()
@@ -152,6 +166,7 @@ class PrivateAIRepository(
                 ensureActive()
                 check(generation == workspaceGeneration)
                 _vaultReady.value = true
+                _lastSyncTimestamp.value = configStore?.lastSync(newConfig) ?: 0
                 if (newConfig.simulatedNodeEnabled) seedDemo()
                 checkConnection()
             } catch (e: Exception) {
@@ -173,6 +188,7 @@ class PrivateAIRepository(
             val stats = nodeService.getNodeStats(config)
             requireCurrent(config, generation)
             _nodeStats.value = stats
+            _lastConnectionCheck.value = System.currentTimeMillis()
             _modelProcessingMode.value = stats.processingMode
             _connectionStatus.value = if (config.simulatedNodeEnabled) ConnectionStatus.DEMO else ConnectionStatus.CONNECTED
             _lastError.value = null
@@ -208,6 +224,10 @@ class PrivateAIRepository(
                 }
             }
             count += replayCaptures(config, generation, deliveryErrors)
+            if (!config.simulatedNodeEnabled && "meetings" in _nodeStats.value.capabilities && "workflow" in _nodeStats.value.scopes) {
+                try { replayMeetings(config, generation); refreshMeetings() }
+                catch(e: Exception) { if(e is CancellationException) throw e; deliveryErrors.add(safeMessage(e)) }
+            }
             val stats = _nodeStats.value
             val update = nodeService.pullDesktopSync(config, stats)
             requireCurrent(config, generation)
@@ -223,18 +243,73 @@ class PrivateAIRepository(
                 requireCurrent(config, generation)
                 _workflowState.value = snapshot
             }
-            _lastSyncTimestamp.value = System.currentTimeMillis()
             if (deliveryErrors.isNotEmpty()) {
                 _lastError.value = "Desktop records refreshed; some requests remain pending or need review. " + deliveryErrors.distinct().first()
                 return@withTrackedRequest SyncResult(false, count, _lastSyncTimestamp.value, _lastError.value)
             }
+            val syncedAt = System.currentTimeMillis()
+            if(!config.simulatedNodeEnabled) configStore?.recordSync(config, syncedAt)
+            requireCurrent(config, generation)
+            _lastSyncTimestamp.value = syncedAt
             _lastError.value = null
             SyncResult(true, count, _lastSyncTimestamp.value)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             _lastError.value = safeMessage(e)
+            if(e is GatewayException && e.code in setOf("OFFLINE", "TLS", "PHONE_LOCKED")) _connectionStatus.value = ConnectionStatus.DISCONNECTED
             SyncResult(false, errorMessage = _lastError.value)
         } finally { _isSyncing.value = false; sync.unlock() }
+    }
+
+    private fun meetingDestination(): Pair<DesktopNodeConfig, Long> {
+        requireReady()
+        val config = _nodeConfig.value
+        check(config.isPaired && !config.simulatedNodeEnabled) { "Pair with the desktop before recording." }
+        return config to workspaceGeneration
+    }
+    private suspend fun loadPhoneMeetings(config: DesktopNodeConfig, generation: Long) {
+        val binding = PairingConfigParser.destinationIdentity(config)
+        val rows = meetingOutbox.list(binding)
+        val count = database.pendingOperationDao().meetingCount(binding)
+        requireCurrent(config, generation)
+        _phoneMeetings.value = rows; _meetingPending.value = count
+    }
+    suspend fun createMeeting(title: String): String {
+        val (config, generation) = meetingDestination()
+        val id = meetingOutbox.create(PairingConfigParser.destinationIdentity(config), title)
+        requireCurrent(config, generation); loadPhoneMeetings(config, generation)
+        return id
+    }
+    suspend fun saveMeetingAudio(id: String, wav: ByteArray) {
+        val (config, generation) = meetingDestination()
+        meetingOutbox.append(PairingConfigParser.destinationIdentity(config), id, wav)
+        requireCurrent(config, generation); loadPhoneMeetings(config, generation)
+    }
+    suspend fun finishMeeting(id: String) {
+        val (config, generation) = meetingDestination()
+        meetingOutbox.finish(PairingConfigParser.destinationIdentity(config), id)
+        requireCurrent(config, generation); loadPhoneMeetings(config, generation)
+    }
+    suspend fun refreshMeetings() = withTrackedRequest {
+        val (config, generation) = meetingDestination()
+        loadPhoneMeetings(config, generation)
+        if ("meetings" in _nodeStats.value.capabilities && "workflow" in _nodeStats.value.scopes) {
+            val result = workflows.meetings(config); requireCurrent(config, generation); _desktopMeetings.value = result
+        }
+    }
+    private suspend fun replayMeetings(config: DesktopNodeConfig, generation: Long) = meetingDelivery.withLock {
+        val dao = database.pendingOperationDao()
+        val binding = PairingConfigParser.destinationIdentity(config)
+        // Bound each refresh. Only one audio payload is decrypted at a time.
+        repeat(30) {
+            requireCurrent(config, generation)
+            val row = dao.nextMeeting(binding) ?: return@withLock
+            val data = JSONObject(cipher.decrypt(row.encryptedPayload))
+            dao.attempted(row.id, System.currentTimeMillis()); requireCurrent(config, generation)
+            val serverId = workflows.deliverMeeting(config, row.operation, data)
+            requireCurrent(config, generation)
+            dao.acknowledgeMeeting(row.id, serverId, cipher.encrypt(JSONObject().put("sourceId", data.getString("sourceId")).put("serverId", serverId).toString()))
+        }
     }
 
     suspend fun createNewSession(title: String, initialPrompt: String? = null): String {

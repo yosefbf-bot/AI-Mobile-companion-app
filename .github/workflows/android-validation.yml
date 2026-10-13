@@ -83,11 +83,24 @@ jobs:
             sleep 3
           done
           test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = "1"
+          # Keep only this disposable emulator awake while Gradle prepares the tests.
+          # This does not remove its OS PIN or change application authentication.
+          adb shell svc power stayon true
+          adb shell settings put system screen_off_timeout 1800000
+          adb shell input keyevent 224
           adb shell input keyevent 82
           # This PIN belongs only to this disposable, account-free CI emulator.
           adb shell locksettings set-pin 846219
       - name: Run actual Android lock and startup acceptance
-        run: ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.privateai.test.devicePin=846219
+        run: |
+          # Retain the first exception, before teardown or runner cleanup obscures it.
+          # This log belongs only to the account-free synthetic CI device.
+          mkdir -p app/build/reports/ci-emulator
+          adb logcat -c
+          adb logcat -v threadtime >app/build/reports/ci-emulator/instrumentation-logcat.txt &
+          logcat_pid=$!
+          trap 'kill "$logcat_pid" 2>/dev/null || true' EXIT
+          ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.privateai.test.devicePin=846219
       - name: Capture disposable emulator failure evidence
         if: failure()
         run: |
@@ -100,6 +113,9 @@ jobs:
             adb shell uiautomator dump /sdcard/privateai-ci-window.xml >/dev/null 2>&1 || true
             adb pull /sdcard/privateai-ci-window.xml app/build/reports/ci-emulator/window.xml >/dev/null 2>&1 || true
             adb logcat -d -t 1200 >app/build/reports/ci-emulator/logcat.txt || true
+            # Keep actionable synthetic-device diagnostics even if artifact storage is full.
+            cat app/build/reports/ci-emulator/window.xml || true
+            grep -E 'PrivateAIAcceptance|AndroidRuntime|TestRunner|ComposeRuntime' app/build/reports/ci-emulator/instrumentation-logcat.txt | tail -n 250 || true
           fi
       - name: Hash debug candidate
         if: success()

@@ -1,3 +1,94 @@
+## October 12 final hosted validation result
+
+Read [the completed validation checkpoint](docs/FINAL_VALIDATION_2026-10-12.md)
+and its [sanitized exact-head receipt](docs/final-validation-2026-10-12.json).
+Both Android `47e3b4a` hosted runs passed all four instrumented tests, including
+three real OS PIN/Keystore unlock/Notes/relock cycles and lifecycle cleanup.
+All 51 local Android tests passed. Desktop `f7777a5` functional checks passed;
+accepted Windows binary code remains `6e915aa`. Production binaries are unchanged.
+All four hosted runs failed only their mandatory artifact uploads on GitHub quota.
+Earlier sections are historical checkpoints; their pending Android status is
+superseded by this result. Check current PR checks for later documentation heads.
+The owner merges main. Keep review branches until successful integration.
+
+## October 12 follow-up: complete real activity cleanup on main
+
+Both ca1d6ea hosted runs (38307718223 and 38307723181) passed three actual OS
+PIN/Keystore unlock/Dashboard/Notes/relock cycles. Both still failed the test during
+framework teardown: repeatOnLifecycle removed observers on the instrumentation
+thread when Compose 1.7.2 withTestCoroutines called TestScope.runTest to drain
+cancellations. This is a failed device acceptance result, despite passing test-body
+assertions; the earlier wrong-thread composition crash did not recur.
+
+The follow-up explicitly closes the real ActivityScenario and drains the queued
+lifecycle cleanup on Android main in @After, before Compose's final test-scope
+cleanup. Exceptions and assertions are preserved. The screen-only regression now
+uses the same lifecycle-aware collection as MainActivity. No production code,
+runtime version, APK, authentication or encryption change. Local validation of
+this follow-up passed all 51 tests (zero failures/errors/skips), real desktop
+pinned-HTTPS interoperability, lint (zero errors/73 warnings), app and test APK
+builds. Production APK SHA-256 remains 4b3ea024d6d748a382682587834f1d5bf7168c7f83812b2c786828c79fb91425.
+Evidence: desktop ignored Validation/assistant-first-2026-10-07/android-lifecycle-cleanup.log
+and the matching Gradle XML. Fresh hosted device verification remains required.
+
+Desktop f7777a5 passed both exact-head regression/dependency/build checks; only
+artifact retention failed on account quota. All 26 approved old archives remain
+verified in recovery and removed remotely. Current instructions leave main merging
+to the owner. Preserve both draft PRs until remaining checks pass.
+
+## October 12 original device failure identified: test dispatcher
+
+Diagnostic PR run 38274513926 reproduced the crash on the third authentication
+cycle. Its first exception is CalledFromWrongThreadException: the Compose test
+frame clock resumed Android view work on DefaultDispatcher-worker-4 after the
+repository emitted vaultReady from its IO scope. The SlotTable disposal exception
+was secondary. The push run passed all three cycles, explaining the intermittency.
+
+The narrow correction supplies StandardTestDispatcher to both Android Compose
+rules and the Notes screen regression; only the Android test configuration gains
+kotlinx-coroutines-test. Production code, runtime dependencies, UI authentication,
+Keystore and data remain unchanged. The exact installed Compose 1.7.2 source
+supports this dispatcher override. Google's guidance explains the unconfined
+versus queued test behavior: https://developer.android.com/develop/ui/compose/testing/migrate-v2
+No Compose/runtime upgrade or relaxed assertion is required. The real OS PIN and
+three unlock/Dashboard/Notes/relock cycles remain mandatory.
+
+Local validation after this correction passed all 51 tests with no failures,
+errors or skips, including the real synthetic Node Core/SQLite pinned-HTTPS
+interoperability and ten Notes disposal/restoration cycles with background state
+emission. Lint has zero errors/73 warnings; both app and test APKs build. The app
+APK remains byte-for-byte unchanged (SHA-256 4b3ea024d6d748a382682587834f1d5bf7168c7f83812b2c786828c79fb91425).
+Evidence: desktop ignored Validation/assistant-first-2026-10-07/android-dispatcher-final-2.log
+and the matching Gradle XML reports. Two earlier local runs exposed missing waits
+in this new regression; they remain recorded as failed runs. The corrected test
+waits for the draft-save effect and each UI transition without removing assertions.
+Fresh hosted device results remain required. Current workspace instructions leave
+main merging to the owner; preserve the review branch until integration.
+
+## October 12 intermittent device lifecycle investigation
+
+Source 4a1dd87 passed all four device tests in push run 38239708086, while PR run
+38239713135 crashed in Compose SlotTable disposal. This is unresolved, not a
+passing acceptance claim. The OS-authentication/Notes/relock case now repeats
+three times and logs the original test exception before rule teardown. CI keeps
+continuous synthetic-device logcat to preserve the first error. Production code,
+authentication, dependencies and existing data are unchanged by this diagnostic
+commit. The approved 26 old CI archives were backed up, verified and removed;
+GitHub still reports artifact quota pending recalculation. Do not merge a known
+failing head. Current workspace instructions leave main merging to the owner.
+
+## October 12 device acceptance: Dashboard assertion correction
+
+Hosted run 38238022399 compiled, passed unit/lint and executed four device tests. Keeping the emulator awake resolved the missing UI hierarchy; three tests passed. The remaining real OS-authentication test successfully unlocked Keystore and reached Dashboard, then expected an obsolete label. It now asserts the current explicit warning that no recorded alerts does not establish complete monitoring. Production UI/security is unchanged. Fresh exact-head device acceptance and artifact upload remain required; full remote artifact storage is still blocked pending cleanup authorization.
+
+## October 12 hosted acceptance follow-up
+
+The owner authorized merging both reviewed mains and deleting superseded branches only after completion, preserving unique work. Source 28a6fe1 passed hosted compilation/unit/lint, but device acceptance had two UI failures (no Compose hierarchy), not a passing emulator result. The next run keeps the disposable emulator awake, exposes failure diagnostics even when artifact storage is full, and explicitly opens Dashboard after the new Chat default. Production authentication/security is unchanged. Full hosted device acceptance remains pending.
+
+# Current in-progress simplification
+
+Read [the October 11 checkpoint](docs/ASSISTANT_FIRST_PROGRESS_2026-10-08.md) first. It covers simpler navigation, phone recording/PC transcription, persistent connection status, dark mode and 50 passing tests. The owner revoked the old 1% stop rule. Older acceptance reports do not establish physical-phone acceptance of these changes.
+
 # Android companion development handoff
 
 ## Current integration
@@ -117,7 +208,5 @@ bridge. Preserve OS authentication, encryption, migrations, stable retries,
 provider/privacy/resource gates and source-linked clinical review. Do not replace
 the current source with an older ZIP or make unavailable capabilities look successful.
 
-If the user's five-hour allowance reaches 1% remaining, save progress and stop.
-Follow the latest explicit resume instruction in the chat; a past one-time
-wakeup is not a recurring work schedule. Scheduling must use the app automation
+The owner revoked the former 1% stop rule. A past one-time wakeup is not a recurring work schedule. Scheduling must use the app automation
 tool and cannot be assumed successful if its request is rejected.

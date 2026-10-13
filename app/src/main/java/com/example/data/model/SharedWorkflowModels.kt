@@ -13,3 +13,5 @@ data class WorkflowSnapshot(
     val drafts: List<WorkflowDraft> = emptyList(), val notifications: List<FollowUpNotification> = emptyList(),
     val truncated: Boolean = false
 )
+
+data class DesktopMeeting(val sourceId: String, val title: String, val status: String, val pendingAudio: Int, val summary: String, val actions: List<String>)

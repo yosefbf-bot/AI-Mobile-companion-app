@@ -79,6 +79,40 @@ class SharedWorkflowService(private val transport: DesktopNodeService) {
         require(result.getString("id") == id && result.getString("status") == "acknowledged") { "Notification acknowledgment was not confirmed." }
     }
 
+    suspend fun meetings(config: DesktopNodeConfig): List<DesktopMeeting> =
+        objects(transport.request(config, "/mobile/api/v1/meetings").getJSONArray("meetings")).map {
+            DesktopMeeting(it.getString("sourceId"), it.getString("title"), it.getString("status"), it.optInt("pendingAudio"),
+                it.optString("summary"), objects(it.optJSONArray("actions")).map { a -> a.optString("title") })
+        }
+
+    suspend fun deliverMeeting(config: DesktopNodeConfig, kind: String, input: JSONObject): String {
+        if (kind != "MEETING_AUDIO") {
+            val endpoint = when(kind) { "MEETING_CREATE" -> "create"; "MEETING_FINISH" -> "finish"; else -> error("Unsupported meeting operation.") }
+            val result = transport.request(config, "/mobile/api/v1/meetings/$endpoint", input)
+            require(result.getString("sourceId") == input.getString("sourceId")) { "Meeting acknowledgment did not match." }
+            return result.getString("id")
+        }
+        val lease = transport.authorizationLease(config)
+        val bytes = Base64.decode(input.getString("audio"), Base64.NO_WRAP)
+        require(bytes.size in 364..640044)
+        val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val chunkId = input.getString("chunkId")
+        val size = 80 * 1024
+        val total = (bytes.size + size - 1) / size
+        for (index in 0 until total) {
+            val result = transport.request(config, "/mobile/api/v1/meetings/audio", JSONObject()
+                .put("sourceId", input.getString("sourceId")).put("chunkId", chunkId).put("index", index).put("total", total)
+                .put("bytes", bytes.size).put("sha256", hash)
+                .put("data", Base64.encodeToString(bytes.copyOfRange(index * size, minOf(bytes.size, (index + 1) * size)), Base64.NO_WRAP)), lease)
+            require(result.getString("chunkId") == chunkId && result.getInt("index") == index)
+            if (result.optBoolean("complete")) {
+                require(result.getString("sha256") == hash && result.getInt("bytes") == bytes.size) { "Recording integrity check failed." }
+                return result.getString("audioId")
+            }
+        }
+        throw GatewayException("PROTOCOL", message = "Desktop did not confirm the complete recording chunk.")
+    }
+
     companion object {
         fun action(a: JSONObject) = WorkflowAction(a.getString("id"), a.optString("title"), a.optString("description"), a.optString("owner"),
             if (a.isNull("dueAt")) null else a.getLong("dueAt"), a.optString("status"), a.getString("revision"), nullableString(a, "captureId"),

@@ -10,6 +10,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.example.data.model.*
 import com.example.data.network.PairingConfigParser
+import com.example.ui.theme.Appearance
 import com.example.ui.components.ConnectionStatusBadge
 
 @Composable
@@ -17,11 +18,21 @@ fun NodeSettingsScreen(
     currentConfig: DesktopNodeConfig, connectionStatus: ConnectionStatus, secureClinicalMode: Boolean,
     onSaveConfig: (DesktopNodeConfig) -> Unit, onToggleSecureClinicalMode: (Boolean) -> Unit,
     onTestConnection: () -> Unit, onLockVault: () -> Unit, modifier: Modifier = Modifier,
-    onRequestNotificationPermission: () -> Unit = {}
+    onRequestNotificationPermission: () -> Unit = {},
+    appearance: Appearance = Appearance.DARK, onAppearanceChange: (Appearance) -> Unit = {}
 ) {
     var pairingText by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     LazyColumn(modifier.fillMaxSize().testTag("node_settings_screen"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item {
+            Text("Appearance", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Appearance.entries.forEach { option ->
+                    FilterChip(selected = appearance == option, onClick = { onAppearanceChange(option) },
+                        label = { Text(option.label) }, modifier = Modifier.testTag("appearance_" + option.name.lowercase()))
+                }
+            }
+        }
         item {
             Text("Desktop connection", style = MaterialTheme.typography.headlineSmall)
             ConnectionStatusBadge(connectionStatus, currentConfig.hostIp)

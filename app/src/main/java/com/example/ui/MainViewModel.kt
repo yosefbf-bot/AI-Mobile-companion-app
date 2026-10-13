@@ -34,6 +34,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         configured
     }
     val connectionStatus get() = repository.connectionStatus
+    val lastConnectionCheck get() = repository.lastConnectionCheck
     val lastSyncTimestamp get() = repository.lastSyncTimestamp
     val nodeConfig get() = repository.nodeConfig
     val nodeStats get() = repository.nodeStats
@@ -49,6 +50,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _lastSavedCaptureId = MutableStateFlow<String?>(null)
     val lastSavedCaptureId = _lastSavedCaptureId.asStateFlow()
     private val protectedDrafts = mutableMapOf<String, String>()
+    var stopMeetingRecording: (() -> Unit)? = null
     private var activeOperations = 0
     val chatSessions = repository.chatSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val documents = repository.documents.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -76,7 +78,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val opening = repository.onUnlocked()
                     try { opening.join(); if (vaultReady.value) configureNotifications(nodeConfig.value) }
                     finally { if (!isUnlocked.value) opening.cancel() }
-                } else { repository.onLocked(); _pendingEvidence.value = null; _lastSavedCaptureId.value = null; _selectedDocument.value = null }
+                } else { stopMeetingRecording?.invoke(); repository.onLocked(); _pendingEvidence.value = null; _lastSavedCaptureId.value = null; _selectedDocument.value = null }
             }
         }
     }
@@ -161,7 +163,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun markAllNotificationsRead() = operation { repository.markAllNotificationsRead() }
     fun stopStreaming() { repository.stopStreaming(); _isStreamingResponse.value = false; _userFeedback.value = "Request stopped. Review pending delivery before submitting another request." }
     fun unlockWithPin(pin: String) = biometricAuthManager.unlockWithPin(pin)
-    fun lockVault() { repository.onLocked(); biometricAuthManager.lock(); _activeSessionId.value = null; _selectedDocument.value = null }
+    fun lockVault() { stopMeetingRecording?.invoke(); repository.onLocked(); biometricAuthManager.lock(); _activeSessionId.value = null; _selectedDocument.value = null }
     fun refreshWorkflows() = triggerSync()
     fun createCapture(text: String, kind: String, location: String, owner: String, dueAt: Long?, channel: String?, attachment: ChatAttachment?) =
         operation("Note saved or queued. Review the desktop's proposed actions; no email or WhatsApp draft has been sent.") {

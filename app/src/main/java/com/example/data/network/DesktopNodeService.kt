@@ -61,20 +61,34 @@ class DesktopNodeService(
         if (cancellationGeneration.get() != lease.cancellation) throw CancellationException("The desktop request was stopped.")
     }
 
+    private var cachedClient: OkHttpClient? = null
+    private var cachedDestination: String? = null
+
+    @Synchronized
     private fun client(config: DesktopNodeConfig, chat: Boolean = false): OkHttpClient {
         val cert = try { PairingConfigParser.certificate(config) } catch (_: Exception) {
             throw GatewayException("PAIRING_REQUIRED", message = "Pair again with the desktop's complete HTTPS link and certificate.")
         }
+        val destination = "${config.hostIp}:${config.port}:${PairingConfigParser.destinationIdentity(config)}"
+        cachedClient?.takeIf { cachedDestination == destination }?.let {
+            return if (chat) it.newBuilder().readTimeout(330, TimeUnit.SECONDS).callTimeout(335, TimeUnit.SECONDS).build() else it
+        }
+        cachedClient?.connectionPool?.evictAll()
+        cachedClient?.dispatcher?.executorService?.shutdown()
         val store = KeyStore.getInstance(KeyStore.getDefaultType()).apply { load(null); setCertificateEntry("paired-desktop", cert) }
         val factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(store) }
         val trust = factory.trustManagers.filterIsInstance<X509TrustManager>().single()
         val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
-        return OkHttpClient.Builder()
+        val base = OkHttpClient.Builder()
             .sslSocketFactory(context.socketFactory, trust)
             // Keep ordinary hostname/IP verification. Never accept all self-signed certificates.
             .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
-            .connectTimeout(5, TimeUnit.SECONDS).readTimeout(if (chat) 330L else 20L, TimeUnit.SECONDS).callTimeout(if (chat) 335L else 25L, TimeUnit.SECONDS)
+            .connectionPool(okhttp3.ConnectionPool(2, 30, TimeUnit.SECONDS))
+            .connectTimeout(5, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).callTimeout(25, TimeUnit.SECONDS)
             .build()
+        cachedDestination = destination
+        cachedClient = base
+        return if (chat) base.newBuilder().readTimeout(330, TimeUnit.SECONDS).callTimeout(335, TimeUnit.SECONDS).build() else base
     }
 
     suspend fun request(config: DesktopNodeConfig, endpoint: String, data: JSONObject? = null,

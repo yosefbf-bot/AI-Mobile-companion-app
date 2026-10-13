@@ -52,5 +52,20 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
         catch (e: Exception) { file.failWrite(stream); throw e }
     }
 
-    @Synchronized fun clear() { file.delete() }
+    private val syncFile = AtomicFile(File(context.noBackupFilesDir, "private-ai-last-sync-v1.bin"))
+    @Synchronized fun lastSync(config: DesktopNodeConfig): Long {
+        if(config.simulatedNodeEnabled || !config.isPaired || !syncFile.baseFile.exists()) return 0
+        require(syncFile.baseFile.length() <= 4096)
+        val data = JSONObject(cipher.decrypt(syncFile.readFully().toString(Charsets.UTF_8)))
+        return if(data.getString("destination") == com.example.data.network.PairingConfigParser.destinationIdentity(config)) data.getLong("at").coerceAtLeast(0) else 0
+    }
+    @Synchronized fun recordSync(config: DesktopNodeConfig, at: Long) {
+        require(config.isPaired && !config.simulatedNodeEnabled && at > 0)
+        val data = JSONObject().put("destination", com.example.data.network.PairingConfigParser.destinationIdentity(config)).put("at", at)
+        val bytes = cipher.encrypt(data.toString()).toByteArray(Charsets.UTF_8)
+        val stream = syncFile.startWrite()
+        try { stream.write(bytes); syncFile.finishWrite(stream) }
+        catch(e: Exception) { syncFile.failWrite(stream); throw e }
+    }
+    @Synchronized fun clear() { file.delete(); syncFile.delete() }
 }

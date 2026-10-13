@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Build
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.isSystemInDarkTheme
+import com.example.ui.theme.AppearancePreferences
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -77,7 +79,8 @@ enum class ScreenTab(val title: String, val testTag: String) {
     ALERTS("Alerts", "nav_alerts"),
     FILES("Files", "nav_files"),
     SETTINGS("Settings", "nav_settings"),
-    CAPTURE("Notes & follow-ups", "nav_capture")
+    CAPTURE("Notes & follow-ups", "nav_capture"),
+    MEETINGS("Meetings", "nav_meetings")
 }
 
 class MainActivity : FragmentActivity() {
@@ -155,7 +158,9 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
+            val appearancePreferences = remember { AppearancePreferences(this@MainActivity) }
+            var appearance by remember { mutableStateOf(appearancePreferences.read()) }
+            MyApplicationTheme(darkTheme = appearance.isDark(isSystemInDarkTheme())) {
                 val isUnlocked by viewModel.isUnlocked.collectAsStateWithLifecycle()
                 val vaultReady by viewModel.vaultReady.collectAsStateWithLifecycle()
                 val vaultError by viewModel.lastError.collectAsStateWithLifecycle()
@@ -164,6 +169,7 @@ class MainActivity : FragmentActivity() {
                 val lastSavedCaptureId by viewModel.lastSavedCaptureId.collectAsStateWithLifecycle()
                 val pendingEvidence by viewModel.pendingEvidence.collectAsStateWithLifecycle()
                 val connectionStatus by viewModel.connectionStatus.collectAsStateWithLifecycle()
+                val lastConnectionCheck by viewModel.lastConnectionCheck.collectAsStateWithLifecycle()
                 val lastSyncTimestamp by viewModel.lastSyncTimestamp.collectAsStateWithLifecycle()
                 val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
                 val nodeConfig by viewModel.nodeConfig.collectAsStateWithLifecycle()
@@ -181,7 +187,7 @@ class MainActivity : FragmentActivity() {
                 val isStreamingResponse by viewModel.isStreamingResponse.collectAsStateWithLifecycle()
 
                 val snackbarHostState = remember { SnackbarHostState() }
-                var currentTab by remember { mutableStateOf(ScreenTab.HOME) }
+                var currentTab by remember { mutableStateOf(ScreenTab.CHAT) }
                 val chatRoute = "chat:" + activeSessionId.orEmpty()
 
                 LaunchedEffect(pendingExternal, vaultReady) {
@@ -294,14 +300,10 @@ class MainActivity : FragmentActivity() {
                         Scaffold(
                             modifier = Modifier.fillMaxSize(),
                             snackbarHost = { SnackbarHost(snackbarHostState) },
-                            floatingActionButton = {
-                                if (currentTab != ScreenTab.CAPTURE) {
-                                    ExtendedFloatingActionButton(onClick = {
-                                        currentTab = ScreenTab.CAPTURE
-                                        viewModel.refreshWorkflows()
-                                    }, modifier = Modifier.testTag("notes_followups_button"),
-                                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                                        text = { Text("Notes & follow-ups") })
+                            topBar = {
+                                Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("desktop_sync_status")) {
+                                    com.example.ui.components.ConnectionStatusBadge(status = if(isSyncing) com.example.data.model.ConnectionStatus.SYNCING else connectionStatus, hostIp = nodeConfig.hostIp, lastCheckedAt = lastConnectionCheck, onClick = { viewModel.triggerSync() })
+                                    Text(if(nodeConfig.simulatedNodeEnabled) "Demo data · no desktop sync" else if(lastSyncTimestamp > 0) "Last synced: ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(lastSyncTimestamp))}" else "Not synced yet · tap status to connect", style = MaterialTheme.typography.labelSmall)
                                 }
                             },
                             bottomBar = {
@@ -312,11 +314,11 @@ class MainActivity : FragmentActivity() {
                                     // 1. Home (Executive Dashboard)
                                     NavigationBarItem(
                                         selected = currentTab == ScreenTab.HOME,
-                                        onClick = { currentTab = ScreenTab.HOME },
+                                        onClick = { currentTab = ScreenTab.HOME; viewModel.refreshWorkflows() },
                                         icon = {
                                             Icon(Icons.Default.Dashboard, contentDescription = "Home")
                                         },
-                                        label = { Text("Home") },
+                                        label = { Text("Dashboard") },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = CyberTeal,
                                             indicatorColor = MaterialTheme.colorScheme.surfaceVariant
@@ -345,50 +347,21 @@ class MainActivity : FragmentActivity() {
                                         modifier = Modifier.testTag("nav_chat")
                                     )
 
-                                    // 3. Tasks
                                     NavigationBarItem(
-                                        selected = currentTab == ScreenTab.TASKS,
-                                        onClick = { currentTab = ScreenTab.TASKS },
-                                        icon = {
-                                            val runningCount = tasks.count { it.status == "RUNNING" }
-                                            BadgedBox(badge = {
-                                                if (runningCount > 0) {
-                                                    Badge { Text("$runningCount") }
-                                                }
-                                            }) {
-                                                Icon(Icons.Default.SmartToy, contentDescription = "Tasks")
-                                            }
-                                        },
-                                        label = { Text("Tasks") },
-                                        colors = NavigationBarItemDefaults.colors(
-                                            selectedIconColor = CyberTeal,
-                                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant
-                                        ),
-                                        modifier = Modifier.testTag("nav_tasks")
+                                        selected = currentTab == ScreenTab.CAPTURE,
+                                        onClick = { currentTab = ScreenTab.CAPTURE; viewModel.refreshWorkflows() },
+                                        icon = { Icon(Icons.Default.Add, contentDescription = "Notes") },
+                                        label = { Text("Notes") },
+                                        modifier = Modifier.testTag("notes_followups_button")
                                     )
 
-                                    // 4. Alerts
                                     NavigationBarItem(
-                                        selected = currentTab == ScreenTab.ALERTS,
-                                        onClick = { currentTab = ScreenTab.ALERTS },
-                                        icon = {
-                                            val unacknowledgedCount = notifications.count { !it.isAcknowledged }
-                                            BadgedBox(badge = {
-                                                if (unacknowledgedCount > 0) {
-                                                    Badge(containerColor = StatusRed) { Text("$unacknowledgedCount") }
-                                                }
-                                            }) {
-                                                Icon(Icons.Default.NotificationsActive, contentDescription = "Alerts")
-                                            }
-                                        },
-                                        label = { Text("Alerts") },
-                                        colors = NavigationBarItemDefaults.colors(
-                                            selectedIconColor = CyberTeal,
-                                            indicatorColor = MaterialTheme.colorScheme.surfaceVariant
-                                        ),
-                                        modifier = Modifier.testTag("nav_alerts")
+                                        selected = currentTab == ScreenTab.MEETINGS,
+                                        onClick = { currentTab = ScreenTab.MEETINGS },
+                                        icon = { Icon(Icons.Default.SmartToy, contentDescription = "Meetings") },
+                                        label = { Text("Meetings") },
+                                        modifier = Modifier.testTag("nav_meetings")
                                     )
-
                                     // 5. Files
                                     NavigationBarItem(
                                         selected = currentTab == ScreenTab.FILES,
@@ -396,7 +369,7 @@ class MainActivity : FragmentActivity() {
                                         icon = {
                                             Icon(Icons.Default.FolderShared, contentDescription = "Files")
                                         },
-                                        label = { Text("Files") },
+                                        label = { Text("Library") },
                                         colors = NavigationBarItemDefaults.colors(
                                             selectedIconColor = CyberTeal,
                                             indicatorColor = MaterialTheme.colorScheme.surfaceVariant
@@ -408,7 +381,10 @@ class MainActivity : FragmentActivity() {
                         ) { innerPadding ->
                             Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                                 when (currentTab) {
+                                    ScreenTab.MEETINGS -> com.example.ui.screens.meetings.MeetingsScreen(viewModel)
                                     ScreenTab.HOME -> DashboardScreen(
+                                        workflows = workflowState,
+                                        onNavigateNotes = { currentTab = ScreenTab.CAPTURE; viewModel.refreshWorkflows() },
                                         connectionStatus = connectionStatus,
                                         lastSyncTimestamp = lastSyncTimestamp,
                                         isSyncing = isSyncing,
@@ -485,6 +461,8 @@ class MainActivity : FragmentActivity() {
                                     )
 
                                     ScreenTab.SETTINGS -> NodeSettingsScreen(
+                                        appearance = appearance,
+                                        onAppearanceChange = { appearance = it; appearancePreferences.save(it) },
                                         currentConfig = nodeConfig,
                                         connectionStatus = connectionStatus,
                                         secureClinicalMode = secureClinicalMode,
