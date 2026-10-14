@@ -74,7 +74,8 @@ fun NodeSettingsScreen(
                         }, enabled = currentConfig.notificationKey.isNotBlank() && !currentConfig.simulatedNodeEnabled)
                         Text("Background follow-up notices")
                     }
-                    Text("Optional generic notices use a separate notification-only key. No chat, notes, resident details or remote actions are accessible with that key. Allow notifications when Android asks. Android schedules periodic checks; delivery may be delayed by battery settings.")
+                    Text("Optional generic notices use a separate notification-only key. No chat, notes, resident details or remote actions are accessible with that key. Allow notifications when Android asks.")
+                    Text("Background notices use a separate periodic schedule with a 15-minute minimum. Android may delay checks when the battery is low or background work is restricted. These are not immediate alerts or emergency paging.")
                     if (currentConfig.notificationKey.isBlank()) Text("Pair again with the desktop's Notifications permission to enable this option.")
                 }
             }
@@ -84,18 +85,36 @@ fun NodeSettingsScreen(
             BatteryOptimizationMode.entries.forEach { mode ->
                 Row {
                     RadioButton(currentConfig.batteryMode == mode, onClick = { onSaveConfig(currentConfig.copy(batteryMode = mode)) })
-                    Column { Text(mode.title); Text(mode.description, style = MaterialTheme.typography.bodySmall) }
+                    Column {
+                        Text(mode.title)
+                        Text(if (mode == BatteryOptimizationMode.MANUAL_ONLY)
+                            "Use Sync now to refresh. Opening the workspace or changing connection settings can still check the connection."
+                            else mode.description, style = MaterialTheme.typography.bodySmall)
+                        Text(when (mode) {
+                            BatteryOptimizationMode.REAL_TIME -> "Most responsive; higher battery and network use."
+                            BatteryOptimizationMode.SMART_ECO -> "Balanced; lower battery and network use (recommended)."
+                            BatteryOptimizationMode.MANUAL_ONLY -> "Lowest automatic checking overhead; no periodic full-access checks."
+                        }, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
+            Text("Relative estimates only. Actual battery life varies by device, network and Android background limits.", style = MaterialTheme.typography.bodySmall)
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Switch(currentConfig.simulatedNodeEnabled, onCheckedChange = { onSaveConfig(currentConfig.copy(simulatedNodeEnabled = it)) })
                 Column { Text("Isolated demo workspace"); Text("Examples are labeled and kept in a separate database. Live data stays in the real workspace.", style = MaterialTheme.typography.bodySmall) }
             }
+        }
+        item {
+            Text("Privacy & Unlock", style = MaterialTheme.typography.titleMedium)
+            Text("Screenshots and app previews are blocked for the protected phone workspace.")
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Switch(secureClinicalMode, onCheckedChange = onToggleSecureClinicalMode)
-                Column { Text("Clinical privacy"); Text("Prevent screenshots and require local-only, HIPAA-mode chat on the desktop. Turn this off only for approved general inquiries; desktop safeguards still apply.", style = MaterialTheme.typography.bodySmall) }
+                Column {
+                    Text("Require local-only and HIPAA-mode phone chats")
+                    Text("Adds processing restrictions to phone chat requests. Turn this off only for approved general inquiries. Desktop HIPAA, provider approval and organization policy still apply; screenshot protection stays on.", style = MaterialTheme.typography.bodySmall)
+                }
             }
             Button(onClick = onLockVault) { Text("Lock phone workspace") }
         }

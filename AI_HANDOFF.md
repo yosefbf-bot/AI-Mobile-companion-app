@@ -1,3 +1,37 @@
+## October 14 latest actual device result — unresolved
+
+Exacthead13694876PR3 failed both API34 runs38531126312/38531121066:
+three of four casespassed; credentialwindowfieldmissing attestline154 in
+unlockNavigateAndRelock. Causeundetermined; prior IME-only Back issue is not
+established as this newfailure. Build,unit64pass/1fixture-skip,lint0errors/75warnings
+and artifactuploadpassed. Keepdraft; no completed device acceptance claim.
+Evidence is in desktopValidation/four-phase-2026-10-13/android-hosted-13694876-inspection.json
+andmatching sanitizedlogs/XML. DesktopPhase3 backends are saved uncommitted;
+full642casespassed, UI/transportunfinished. Pausedat1%; one-time resumealreadyfired.
+Ownerapps/data/keys/signernotchanged. Fetchmains/readdesktoptrackerbeforecontinuing.
+
+## October 14 authentication acceptance fixture correction
+
+Read the October 14 section in [the four-phase tracker](docs/FOUR_PHASE_PROGRESS_2026-10-13.md).
+Both API34 runs failed because one Back hid the PIN keyboard without cancelling
+the original system dialog; no second prompt was shown. Corrected test performs
+actual OS cancellation and retains all security assertions and real Keystore cycles.
+Ten focused state cases passed; instrumented APK compiled/signature passed. Full
+unchanged unit output was cached. Production APK/data/key/signer unchanged.
+Fresh hosted device acceptance is pending. Owner merges main.
+
+## October 13 four-phase source checkpoint
+
+Read [the companion checkpoint](docs/FOUR_PHASE_PROGRESS_2026-10-13.md) first.
+Automatic OS prompting, fixed capture protection, persisted processing preference
+and lifecycle-safe polling are implemented on the new review branch.
+Combined 65 local cases pass, lint has zero errors/42 warnings, both APKs build,
+and final instrumented sources compile. Actual device execution is pending.
+Do not claim QR/longer sessions complete or transfer older device acceptance.
+No installation, key rotation, signer or pairing change. The owner merges main.
+Shared plan is in the desktop tracker. Resume this thread once October 14 at
+3:25 a.m. America/New_York after the 1% checkpoint; fetch both mains first.
+
 ## October 12 final hosted validation result
 
 Read [the completed validation checkpoint](docs/FINAL_VALIDATION_2026-10-12.md)
@@ -210,3 +244,19 @@ the current source with an older ZIP or make unavailable capabilities look succe
 
 The owner revoked the former 1% stop rule. A past one-time wakeup is not a recurring work schedule. Scheduling must use the app automation
 tool and cannot be assumed successful if its request is rejected.
+
+## 2026-10-14 Home-return acceptance correction
+
+Both exact-head 13694876 hosted runs passed two actual OS-PIN/Keystore cycles,
+but the test reopened the Activity before Home delivered onStop. Continuous logs
+show PAUSED then RESUMED without STOPPED; no new OS authentication was requested.
+The test now waits, bounded to ten seconds, for actual ActivityScenario CREATED
+after real Home, asserts the workspace locked, and then launches normally. No
+production authentication behavior or assertions were weakened. Focused state
+tests reran: 10 passed, zero failures/errors/skips; lint zero errors/42 warnings;
+instrumented test sources compiled and packaged. The production APK and existing
+signer are unchanged. Fresh exact-head hosted device acceptance is still pending;
+physical phone acceptance remains separate. Evidence is retained outside Git.
+
+The current assignment permits Codex to merge this review only after fresh
+exact-head GitHub checks pass; see the dated AGENTS authorization.

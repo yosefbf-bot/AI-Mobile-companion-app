@@ -151,7 +151,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _activeSessionId.value = null; _selectedDocument.value = null; repository.toggleSimulatedDesktopNode(enabled)
         configureNotifications(repository.nodeConfig.value)
     }
-    fun setSecureClinicalMode(enabled: Boolean) { repository.setSecureClinicalMode(enabled); _userFeedback.value = "Screenshot protection preference updated. Desktop processing policy remains controlled on the PC." }
+    fun setSecureClinicalMode(enabled: Boolean) = operation("Phone chat privacy preference updated. Desktop processing policy remains controlled on the PC.") {
+        repository.setSecureClinicalMode(enabled).join()
+    }
     fun setModelProcessingMode(mode: String) = operation { repository.setModelProcessingMode(mode) }
     fun startAgent(name: String) = operation("Demo task created. No workstation execution occurred.") { repository.startAgent(name) }
     fun runPlaybook(name: String) = operation("Demo playbook created. No workstation execution occurred.") { repository.runPlaybook(name) }

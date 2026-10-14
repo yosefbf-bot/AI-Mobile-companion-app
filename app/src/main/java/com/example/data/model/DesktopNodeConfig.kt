@@ -12,7 +12,8 @@ data class DesktopNodeConfig(
     val certificateDer: String = "",
     val certificateFingerprint: String = "",
     val notificationKey: String = "",
-    val backgroundNotificationsEnabled: Boolean = false
+    val backgroundNotificationsEnabled: Boolean = false,
+    val secureClinicalMode: Boolean = true
 ) {
     val isPaired: Boolean get() = hostIp.isNotBlank() && pairKey.isNotBlank() && certificateDer.isNotBlank() && certificateFingerprint.isNotBlank()
 }

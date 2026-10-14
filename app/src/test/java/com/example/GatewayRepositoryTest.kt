@@ -12,6 +12,12 @@ import com.sun.net.httpserver.HttpsServer
 import com.sun.net.httpserver.HttpsConfigurator
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.StandardTestDispatcher
 import org.json.JSONObject
 import org.junit.*
 import org.junit.Assert.*
@@ -33,6 +39,7 @@ import javax.net.ssl.SSLContext
 /** Uses a clearly synthetic loopback TLS fixture, never a live account or workstation key. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
+@OptIn(ExperimentalCoroutinesApi::class)
 class GatewayRepositoryTest {
     private lateinit var server: HttpsServer
     private lateinit var config: DesktopNodeConfig
@@ -40,6 +47,8 @@ class GatewayRepositoryTest {
     private lateinit var demoDatabase: AppDatabase
     private lateinit var repository: PrivateAIRepository
     private lateinit var cipher: VaultCipher
+    private lateinit var configuration: SecureConfigStore
+    private val statusReads = AtomicInteger()
     private val chatRequests = AtomicInteger()
     private val evidenceRequests = AtomicInteger()
     private val actionReads = AtomicInteger()
@@ -55,6 +64,7 @@ class GatewayRepositoryTest {
     @Volatile private var wrongChatAcknowledgment = false
     @Volatile private var evidenceComplete = true
     @Volatile private var beforeEvidenceResponse: (() -> Unit)? = null
+    @Volatile private var beforeStatusResponse: (() -> Unit)? = null
     private val executor = Executors.newFixedThreadPool(2)
 
     @Before fun setup() {
@@ -73,11 +83,15 @@ class GatewayRepositoryTest {
             val input = if (exchange.requestMethod == "POST") JSONObject(exchange.requestBody.bufferedReader().readText()) else JSONObject()
             var code = 200
             val output = when (exchange.requestURI.path) {
-                GatewayEndpoints.STATUS -> if (!allowStatus) { code = 503; JSONObject().put("error",JSONObject().put("code","UNAVAILABLE")) } else JSONObject().put("status","ONLINE").put("protocolVersion",1)
+                GatewayEndpoints.STATUS -> {
+                    statusReads.incrementAndGet()
+                    beforeStatusResponse?.invoke()
+                    if (!allowStatus) { code = 503; JSONObject().put("error",JSONObject().put("code","UNAVAILABLE")) } else JSONObject().put("status","ONLINE").put("protocolVersion",1)
                     .put("serverName","SYNTHETIC test server").put("loadedModel",JSONObject.NULL).put("localModelState","unloaded")
                     .put("cpuUsage",JSONObject.NULL).put("gpuUsage",JSONObject.NULL).put("vramUsedGb",JSONObject.NULL).put("vramTotalGb",JSONObject.NULL)
                     .put("activeJobs",0).put("scopes",JSONObject().put("chat",grantChat).put("tasks",true).put("workflow",true))
                     .put("capabilities",org.json.JSONArray().put("conversations"))
+                }
                 GatewayEndpoints.CHAT_SEND -> {
                     chatRequests.incrementAndGet()
                     synchronized(requests) { requests.add(input) }
@@ -125,7 +139,7 @@ class GatewayRepositoryTest {
         }
         database = Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).allowMainThreadQueries().build()
         demoDatabase = Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).allowMainThreadQueries().build()
-        val configuration = SecureConfigStore(context,cipher)
+        configuration = SecureConfigStore(context,cipher)
         configuration.clear(); configuration.save(config)
         repository = PrivateAIRepository(database,configStore=configuration,demoDatabase=demoDatabase,cipher=cipher)
     }
@@ -136,6 +150,23 @@ class GatewayRepositoryTest {
         if (::demoDatabase.isInitialized) demoDatabase.close()
         if (::server.isInitialized) server.stop(0)
         executor.shutdownNow()
+    }
+
+    private suspend fun completeScheduledJob(scheduler: TestCoroutineScheduler, job: Job) {
+        withTimeout(10_000) {
+            while (!job.isCompleted) { scheduler.runCurrent(); delay(1) }
+            scheduler.runCurrent()
+        }
+        job.join()
+    }
+
+    private suspend fun completeScheduledCheck(scheduler: TestCoroutineScheduler) {
+        withTimeout(10_000) {
+            scheduler.runCurrent()
+            while (repository.isSyncing.value) { delay(1); scheduler.runCurrent() }
+            // Also resume the polling parent's join, so the next interval is armed before advancing time.
+            scheduler.runCurrent()
+        }
     }
 
     @Test fun productionStartsEmptyAndRequiresUnlock() = runBlocking {
@@ -168,7 +199,7 @@ class GatewayRepositoryTest {
         assertTrue(pending.requireLocal)
         assertTrue(pending.requireHipaa)
         assertTrue(repository.getMessagesForSession(session).first().none { it.sender == "assistant" })
-        repository.setSecureClinicalMode(false) // A later preference must never weaken the queued request.
+        repository.setSecureClinicalMode(false).join() // A later preference must never weaken the queued request.
         allowChat = true
         assertTrue(repository.triggerSync().success)
         assertTrue(database.chatDao().getQueuedOfflineMessages().isEmpty())
@@ -184,12 +215,12 @@ class GatewayRepositoryTest {
 
     @Test fun stricterPrivacyAfterAnAttemptRequiresReviewAndDoesNotBlockWorkflowReads() = runBlocking {
         repository.onUnlocked().join()
-        repository.setSecureClinicalMode(false)
+        repository.setSecureClinicalMode(false).join()
         allowChat = false
         val session = repository.createNewSession("SYNTHETIC previous policy")
         try { repository.sendMessage(session,"SYNTHETIC request"); fail("Actual server failure must propagate.") } catch (_: GatewayException) {}
         assertFalse(requests.single().getBoolean("requireLocal"))
-        repository.setSecureClinicalMode(true)
+        repository.setSecureClinicalMode(true).join()
         allowChat = true
         val sync = repository.triggerSync()
         assertFalse(sync.success)
@@ -207,14 +238,14 @@ class GatewayRepositoryTest {
     @Test fun neverAttemptedOfflineRequestCanAdoptStricterPrivacyBeforeItsFirstSend() = runBlocking {
         allowStatus = false
         repository.onUnlocked().join()
-        repository.setSecureClinicalMode(false)
+        repository.setSecureClinicalMode(false).join()
         val session = repository.createNewSession("SYNTHETIC offline")
         repository.sendMessage(session,"SYNTHETIC first attempt")
         val before = database.chatDao().getQueuedOfflineMessages().single()
         assertNull(before.attemptedAt)
         assertFalse(before.requireLocal)
         allowStatus = true
-        repository.setSecureClinicalMode(true)
+        repository.setSecureClinicalMode(true).join()
         assertTrue(repository.triggerSync().success)
         assertEquals(before.requestId,requests.single().getString("requestId"))
         assertTrue(requests.single().getBoolean("requireLocal"))
@@ -239,6 +270,95 @@ class GatewayRepositoryTest {
         val preserved = repository.documents.first().single { it.id == captureId }
         assertEquals("CAPTURE_REVIEW_REQUIRED",preserved.fileType)
         assertTrue(cipher.decrypt(preserved.encryptedContent).contains("SYNTHETIC protected observation"))
+    }
+
+    @Test fun clinicalPrivacyPreferenceIsEncryptedAndRestoredAfterRepositoryRecreation() = runBlocking {
+        repository.onUnlocked().join()
+        repository.setSecureClinicalMode(false).join()
+        assertFalse(repository.secureClinicalMode.value)
+        assertFalse(configuration.load()!!.secureClinicalMode)
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val encrypted = java.io.File(context.noBackupFilesDir, "private-ai-gateway-v2.bin").readText()
+        assertTrue(encrypted.startsWith(VaultCodec.PREFIX))
+        assertFalse(encrypted.contains("secureClinicalMode"))
+        repository.close()
+        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase, cipher = cipher)
+        assertTrue(repository.secureClinicalMode.value) // Protected until the encrypted preference is opened.
+        repository.onUnlocked().join()
+        assertFalse(repository.secureClinicalMode.value)
+        assertEquals(config.pairKey, repository.nodeConfig.value.pairKey)
+        repository.setSecureClinicalMode(true).join()
+        assertTrue(configuration.load()!!.secureClinicalMode)
+    }
+
+    @Test fun olderEncryptedConfigurationWithoutPrivacyFieldKeepsProtectedDefault() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val file = java.io.File(context.noBackupFilesDir, "private-ai-gateway-v2.bin")
+        val previous = JSONObject(cipher.decrypt(file.readText())).apply { remove("secureClinicalMode") }
+        file.writeText(cipher.encrypt(previous.toString()))
+        assertTrue(configuration.load()!!.secureClinicalMode)
+        repository.onUnlocked().join()
+        assertTrue(repository.secureClinicalMode.value)
+        assertEquals(config.certificateFingerprint, repository.nodeConfig.value.certificateFingerprint)
+    }
+
+    @Test fun changingPollingModeRestartsItsIntervalAndManualLeavesNoPeriodicChecks() = runBlocking {
+        val scheduler = TestCoroutineScheduler()
+        repository.close()
+        configuration.save(config.copy(batteryMode = BatteryOptimizationMode.MANUAL_ONLY))
+        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase,
+            cipher = cipher, dispatcher = StandardTestDispatcher(scheduler))
+        completeScheduledJob(scheduler, repository.onUnlocked())
+        completeScheduledJob(scheduler, repository.updateConfig(repository.nodeConfig.value.copy(batteryMode = BatteryOptimizationMode.REAL_TIME)))
+        scheduler.advanceTimeBy(10_000); scheduler.runCurrent()
+        completeScheduledJob(scheduler, repository.updateConfig(repository.nodeConfig.value.copy(batteryMode = BatteryOptimizationMode.SMART_ECO)))
+        val balancedStart = statusReads.get()
+        scheduler.advanceTimeBy(30_000); scheduler.runCurrent()
+        assertEquals(balancedStart, statusReads.get()) // The old 30-second timer must be cancelled.
+        scheduler.advanceTimeBy(269_999); scheduler.runCurrent()
+        assertEquals(balancedStart, statusReads.get())
+        scheduler.advanceTimeBy(1); scheduler.runCurrent()
+        completeScheduledCheck(scheduler)
+        assertEquals(balancedStart + 1, statusReads.get())
+        completeScheduledJob(scheduler, repository.updateConfig(repository.nodeConfig.value.copy(batteryMode = BatteryOptimizationMode.REAL_TIME)))
+        val frequentStart = statusReads.get()
+        scheduler.advanceTimeBy(29_999); scheduler.runCurrent()
+        assertEquals(frequentStart, statusReads.get())
+        scheduler.advanceTimeBy(1); scheduler.runCurrent()
+        completeScheduledCheck(scheduler)
+        assertEquals(frequentStart + 1, statusReads.get())
+        completeScheduledJob(scheduler, repository.updateConfig(repository.nodeConfig.value.copy(batteryMode = BatteryOptimizationMode.MANUAL_ONLY)))
+        val manualStart = statusReads.get()
+        scheduler.advanceTimeBy(600_000); scheduler.runCurrent()
+        assertEquals(manualStart, statusReads.get())
+        assertTrue(repository.triggerSync().success)
+        assertEquals(manualStart + 1, statusReads.get())
+    }
+
+    @Test fun stoppedForegroundCheckCanPollAgainButLockedWorkspaceCannot() = runBlocking {
+        val scheduler = TestCoroutineScheduler()
+        repository.close()
+        configuration.save(config.copy(batteryMode = BatteryOptimizationMode.REAL_TIME))
+        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase,
+            cipher = cipher, dispatcher = StandardTestDispatcher(scheduler))
+        completeScheduledJob(scheduler, repository.onUnlocked())
+        val first = statusReads.get()
+        beforeStatusResponse = { repository.stopStreaming() }
+        scheduler.advanceTimeBy(30_000); scheduler.runCurrent()
+        completeScheduledCheck(scheduler)
+        beforeStatusResponse = null
+        assertEquals(first + 1, statusReads.get())
+        scheduler.advanceTimeBy(30_000); scheduler.runCurrent()
+        completeScheduledCheck(scheduler)
+        assertEquals(first + 2, statusReads.get())
+        repository.onLocked()
+        scheduler.advanceTimeBy(900_000); scheduler.runCurrent()
+        assertEquals(first + 2, statusReads.get())
+        completeScheduledJob(scheduler, repository.onUnlocked())
+        val reopened = statusReads.get()
+        scheduler.advanceTimeBy(30_000); scheduler.runCurrent()
+        completeScheduledCheck(scheduler)
+        assertEquals(reopened + 1, statusReads.get())
     }
 
     @Test fun modelFailureLeavesOutboxPendingWhileWorkflowMetadataStillRefreshes() = runBlocking {

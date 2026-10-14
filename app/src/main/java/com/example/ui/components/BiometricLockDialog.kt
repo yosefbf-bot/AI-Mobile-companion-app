@@ -16,6 +16,8 @@ import androidx.compose.ui.unit.dp
 fun BiometricLockOverlay(
     onTriggerBiometrics: () -> Unit,
     error: String? = null,
+    authenticationInProgress: Boolean = false,
+    onOpenSecuritySettings: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp),
@@ -30,9 +32,14 @@ fun BiometricLockOverlay(
                 Text("Set up an Android screen lock first if this phone does not have one.",
                     style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
-                Button(onClick = onTriggerBiometrics,
+                Button(onClick = onTriggerBiometrics, enabled = !authenticationInProgress,
                     modifier = Modifier.fillMaxWidth().testTag("unlock_biometric_button")) {
-                    Text("Unlock with device authentication")
+                    Text(if (authenticationInProgress) "Device authentication is open…" else "Try again")
+                }
+                onOpenSecuritySettings?.let { openSettings ->
+                    TextButton(onClick = openSettings, enabled = !authenticationInProgress) {
+                        Text("Android device security settings")
+                    }
                 }
             }
         }

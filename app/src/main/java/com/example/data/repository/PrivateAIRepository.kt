@@ -22,9 +22,10 @@ class PrivateAIRepository(
     private val nodeService: DesktopNodeService = DesktopNodeService(),
     private val configStore: SecureConfigStore? = null,
     private val demoDatabase: AppDatabase? = null,
-    private val cipher: VaultCipher = EncryptionManager
+    private val cipher: VaultCipher = EncryptionManager,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val selectedDatabase = MutableStateFlow(database)
     private val chatDao get() = selectedDatabase.value.chatDao()
     private val documentDao get() = selectedDatabase.value.documentDao()
@@ -84,6 +85,7 @@ class PrivateAIRepository(
         try {
             database.migrateLegacyContent(cipher)
             _nodeConfig.value = configStore?.load() ?: _nodeConfig.value
+            _secureClinicalMode.value = _nodeConfig.value.secureClinicalMode
             selectWorkspace()
             _lastSyncTimestamp.value = configStore?.lastSync(_nodeConfig.value) ?: 0
             selectedDatabase.value.migrateLegacyContent(cipher)
@@ -92,13 +94,7 @@ class PrivateAIRepository(
             _vaultReady.value = true
             if (_nodeConfig.value.simulatedNodeEnabled) seedDemo()
             _lastError.value = null
-            polling?.cancel()
-            polling = scope.launch {
-                while (isActive && _vaultReady.value) {
-                    delay(if (_nodeConfig.value.batteryMode == BatteryOptimizationMode.REAL_TIME) 30_000 else 300_000)
-                    if (_nodeConfig.value.batteryMode != BatteryOptimizationMode.MANUAL_ONLY) coroutineScope { launch { triggerSync() }.join() }
-                }
-            }
+            restartPolling(generation)
             if (_nodeConfig.value.isPaired || _nodeConfig.value.simulatedNodeEnabled) checkConnection()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -106,6 +102,24 @@ class PrivateAIRepository(
             _lastError.value = "The protected workspace could not be opened. Unlock again or use the recovery instructions; no data was erased."
         }
         }.also { opening = it }
+    }
+
+    private fun restartPolling(generation: Long) {
+        polling?.cancel()
+        polling = null
+        val interval = when (_nodeConfig.value.batteryMode) {
+            BatteryOptimizationMode.REAL_TIME -> 30_000L
+            BatteryOptimizationMode.SMART_ECO -> 300_000L
+            BatteryOptimizationMode.MANUAL_ONLY -> return
+        }
+        polling = scope.launch {
+            while (isActive && _vaultReady.value && generation == workspaceGeneration) {
+                delay(interval)
+                if (!_vaultReady.value || generation != workspaceGeneration) break
+                // Stop cancels this check, while future checks remain enabled for this open workspace.
+                coroutineScope { launch { triggerSync() }.join() }
+            }
+        }
     }
 
     fun onLocked() {
@@ -146,21 +160,22 @@ class PrivateAIRepository(
     fun getDocumentById(id: String) = selectedDatabase.flatMapLatest { it.documentDao().getDocumentById(id) }
         .combine(vaultReady) { row, ready -> if (ready && row != null) VaultRecords.decode(row, cipher) else null }
 
-    fun updateConfig(newConfig: DesktopNodeConfig) {
+    fun updateConfig(newConfig: DesktopNodeConfig): Job {
         requireReady()
         if (!newConfig.simulatedNodeEnabled && newConfig.isPaired) PairingConfigParser.certificate(newConfig)
         else if (!newConfig.simulatedNodeEnabled) require(newConfig.hostIp.isBlank() && newConfig.pairKey.isBlank() && newConfig.certificateDer.isBlank()) { "Use the complete desktop pairing link." }
         if (newConfig.simulatedNodeEnabled && demoDatabase == null) throw IllegalStateException("Demo requires a separate workspace.")
-        val generation = ++workspaceGeneration
-        opening?.cancel(); nodeService.cancelAll(); activeRequests.keys.forEach { it.cancel() }
         if (!newConfig.simulatedNodeEnabled) configStore?.save(newConfig)
+        val generation = ++workspaceGeneration
+        opening?.cancel(); polling?.cancel(); nodeService.cancelAll(); activeRequests.keys.forEach { it.cancel() }
         _nodeConfig.value = newConfig
+        _secureClinicalMode.value = newConfig.secureClinicalMode
         _workflowState.value = WorkflowSnapshot(); _lastSyncTimestamp.value = 0
         _phoneMeetings.value = emptyList(); _desktopMeetings.value = emptyList(); _meetingPending.value = 0
         _connectionStatus.value = ConnectionStatus.DISCONNECTED; _nodeStats.value = NodeStats()
         _vaultReady.value = false
         selectWorkspace()
-        opening = scope.launch {
+        return scope.launch {
             try {
                 selectedDatabase.value.migrateLegacyContent(cipher)
                 ensureActive()
@@ -168,12 +183,13 @@ class PrivateAIRepository(
                 _vaultReady.value = true
                 _lastSyncTimestamp.value = configStore?.lastSync(newConfig) ?: 0
                 if (newConfig.simulatedNodeEnabled) seedDemo()
+                restartPolling(generation)
                 checkConnection()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 if (generation == workspaceGeneration) { _vaultReady.value = false; _lastError.value = "The selected protected workspace could not be opened. No data was erased." }
             }
-        }
+        }.also { opening = it }
     }
 
     fun toggleSimulatedDesktopNode(enabled: Boolean) = updateConfig(_nodeConfig.value.copy(simulatedNodeEnabled = enabled))
@@ -518,7 +534,7 @@ class PrivateAIRepository(
     suspend fun markNotificationRead(id: String) { requireReady(); taskDao.markNotificationRead(id) }
     suspend fun markAllNotificationsRead() { requireReady(); taskDao.markAllNotificationsRead() }
     suspend fun acknowledgeAlert(id: String) { requireReady(); taskDao.acknowledgeNotification(id) } // Local read marker; never clinical closure.
-    fun setSecureClinicalMode(enabled: Boolean) { _secureClinicalMode.value = enabled }
+    fun setSecureClinicalMode(enabled: Boolean) = updateConfig(_nodeConfig.value.copy(secureClinicalMode = enabled))
     fun setModelProcessingMode(mode: String) { DesktopNodeService.unsupported("Changing desktop processing policy from the phone") }
     suspend fun startAgent(name: String) { requireReady(); taskDao.insertTask(VaultRecords.encode(nodeService.startAgent(name, _nodeConfig.value), cipher)) }
     suspend fun runPlaybook(name: String) { requireReady(); taskDao.insertTask(VaultRecords.encode(nodeService.runPlaybook(name, _nodeConfig.value), cipher)) }

@@ -31,7 +31,8 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
             certificateDer = data.getString("certificateDer"),
             certificateFingerprint = data.getString("certificateFingerprint"),
             notificationKey = data.optString("notificationKey", ""),
-            backgroundNotificationsEnabled = data.optBoolean("backgroundNotificationsEnabled", false)
+            backgroundNotificationsEnabled = data.optBoolean("backgroundNotificationsEnabled", false),
+            secureClinicalMode = data.optBoolean("secureClinicalMode", true)
         )
     }
 
@@ -46,6 +47,7 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
             .put("certificateFingerprint", config.certificateFingerprint)
             .put("notificationKey", config.notificationKey)
             .put("backgroundNotificationsEnabled", config.backgroundNotificationsEnabled)
+            .put("secureClinicalMode", config.secureClinicalMode)
         val bytes = cipher.encrypt(data.toString()).toByteArray(Charsets.UTF_8)
         val stream = file.startWrite()
         try { stream.write(bytes); file.finishWrite(stream) }

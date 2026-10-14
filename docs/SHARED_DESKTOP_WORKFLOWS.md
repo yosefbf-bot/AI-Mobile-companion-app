@@ -45,10 +45,12 @@ The **Stop** control interrupts active requests; future automatic checks remain
 enabled while the protected workspace is open. Background reminder polling is
 separate and can display only generic notices with its restricted permission.
 
-Clinical privacy requests local-only, HIPAA-mode chat on the PC and prevents
-phone screenshots. The desktop enforces those request requirements during
-execution. Processing-provider settings are controlled on the PC. Turning off the
-phone preference is for approved general inquiries and does not remove desktop safeguards.
+The phone processing preference adds Local Only and HIPAA requirements to phone
+chats. The desktop enforces those requirements during execution and controls
+provider approval independently. Turning off this extra phone preference is for
+approved general inquiries and cannot remove desktop safeguards. Screen capture
+and recent-app preview protection are separate and remain enabled throughout the
+protected app, even when this extra processing preference is off.
 Queued requests retain their original privacy restrictions. A stricter setting can
 be adopted before the first attempt; after an attempt, changing the immutable
 request requires review rather than silently changing its replay identity.
