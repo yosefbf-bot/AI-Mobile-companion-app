@@ -3,6 +3,7 @@ package com.example.data.crypto
 import android.app.KeyguardManager
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.security.KeyStore
@@ -13,6 +14,12 @@ import javax.crypto.SecretKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 interface VaultCipher {
     fun encrypt(plaintext: String): String
@@ -29,14 +36,31 @@ object EncryptionManager : VaultCipher {
     @Volatile private var applicationContext: Context? = null
     private val access = MutableStateFlow(false)
     private val generation = AtomicLong()
+    private val session = ForegroundSessionLease(SystemClock::elapsedRealtime)
+    private val expiryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var expiry: Job? = null
     val isUnlocked: StateFlow<Boolean> = access.asStateFlow()
-    val accessGeneration: Long get() = generation.get()
+    val accessGeneration: Long get() = synchronized(this) { hasCurrentAccess(); generation.get() }
 
     fun initialize(context: Context) { applicationContext = context.applicationContext }
-    @Synchronized fun lock() { generation.incrementAndGet(); access.value = false }
+    @Synchronized fun lock() {
+        expiry?.cancel(); expiry = null
+        session.revoke()
+        generation.incrementAndGet()
+        access.value = false
+    }
+
+    /** Used at crypto and transport boundaries, even if timer delivery was delayed. */
+    @Synchronized fun hasCurrentAccess(): Boolean {
+        if (access.value && (session.remainingMillis() == 0L ||
+            (applicationContext?.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager)?.isDeviceLocked == true)) lock()
+        return access.value
+    }
+
+    @Synchronized fun remainingSessionMillis(): Long = if (hasCurrentAccess()) session.remainingMillis() else 0
 
     @Synchronized
-    fun unlockAfterDeviceAuthentication() {
+    fun unlockAfterDeviceAuthentication(authenticatedAtElapsed: Long = SystemClock.elapsedRealtime()) {
         lock()
         try {
             val context = applicationContext ?: throw VaultUnavailableException()
@@ -45,8 +69,20 @@ object EncryptionManager : VaultCipher {
             val key = key(create = true)
             // The OS-authenticated key must work, not just a successful UI callback.
             VaultCodec.encrypt("device authentication check", key)
-            generation.incrementAndGet()
+            session.grant(authenticatedAtElapsed)
+            if (session.remainingMillis() == 0L) throw VaultUnavailableException()
+            val grantedGeneration = generation.incrementAndGet()
             access.value = true
+            expiry = expiryScope.launch {
+                while (true) {
+                    val remaining = synchronized(this@EncryptionManager) {
+                        if (generation.get() != grantedGeneration) return@launch
+                        if (!hasCurrentAccess()) return@launch
+                        session.remainingMillis()
+                    }
+                    delay(remaining.coerceAtLeast(1L))
+                }
+            }
         } catch (e: Exception) { throw VaultUnavailableException(e) }
     }
 
@@ -79,8 +115,17 @@ object EncryptionManager : VaultCipher {
     override fun decrypt(encryptedPayload: String): String = useKey { VaultCodec.decrypt(encryptedPayload, it) }
 
     private fun useKey(operation: (SecretKey) -> String): String {
-        if (!access.value) throw VaultUnavailableException()
-        return try { operation(key()) } catch (e: Exception) {
+        val grantedGeneration = synchronized(this) {
+            if (!hasCurrentAccess()) throw VaultUnavailableException()
+            generation.get()
+        }
+        return try {
+            val result = operation(key())
+            synchronized(this) {
+                if (!hasCurrentAccess() || generation.get() != grantedGeneration) throw VaultUnavailableException()
+            }
+            result
+        } catch (e: Exception) {
             lock()
             throw VaultUnavailableException(e)
         }

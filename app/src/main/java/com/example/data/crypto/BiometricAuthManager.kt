@@ -4,6 +4,7 @@ import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.SystemClock
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -17,6 +18,7 @@ enum class BiometricStatus { AVAILABLE, NONE_ENROLLED, NO_HARDWARE, UNSUPPORTED 
 class BiometricAuthManager(private val context: Context) {
     val isUnlocked: StateFlow<Boolean> = EncryptionManager.isUnlocked
     private val _biometricStatus = MutableStateFlow(BiometricStatus.UNSUPPORTED)
+    @Volatile private var authenticatedAtElapsed: Long? = null
     val biometricStatus: StateFlow<BiometricStatus> = _biometricStatus.asStateFlow()
     val requiresLegacyDeviceCredential: Boolean get() = Build.VERSION.SDK_INT < 30
     init { EncryptionManager.initialize(context); checkBiometricAvailability() }
@@ -29,11 +31,21 @@ class BiometricAuthManager(private val context: Context) {
     }
 
     @Suppress("DEPRECATION")
-    fun deviceCredentialIntent(): Intent? = (context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
-        .createConfirmDeviceCredentialIntent("Unlock Private AI", "Use this phone's screen lock to unlock protected data.")
+    fun deviceCredentialIntent(): Intent? {
+        authenticatedAtElapsed = null
+        return (context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager)
+            .createConfirmDeviceCredentialIntent("Unlock Private AI", "Use this phone's screen lock to unlock protected data.")
+    }
+
+    @Synchronized fun recordDeviceAuthentication() {
+        // Retained with MainViewModel across rotation/foreground deferral. A
+        // duplicate callback cannot extend the grant observed for this attempt.
+        if (authenticatedAtElapsed == null) authenticatedAtElapsed = SystemClock.elapsedRealtime()
+    }
 
     fun completeDeviceCredentialAuthentication(): Boolean = try {
-        EncryptionManager.unlockAfterDeviceAuthentication()
+        val authenticatedAt = authenticatedAtElapsed ?: throw VaultUnavailableException()
+        EncryptionManager.unlockAfterDeviceAuthentication(authenticatedAt)
         true
     } catch (_: Exception) { lock(); false }
 
@@ -56,6 +68,7 @@ class BiometricAuthManager(private val context: Context) {
 
     fun promptBiometricAuth(prompt: BiometricPrompt, title: String = "Unlock Private AI",
         subtitle: String = "Authenticate with the device screen lock or biometrics") {
+        authenticatedAtElapsed = null
         prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle(title).setSubtitle(subtitle)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
             .build())

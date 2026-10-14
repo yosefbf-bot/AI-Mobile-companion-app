@@ -1,3 +1,27 @@
+## October14 current Phase4 checkpoint
+
+Sourcebranch chatgpt/companion-pairing-2026-10-14 starts at verified main7e817069.
+Phase1 PR3 is merged; both exact-head device runs passed4/4 cases with actual
+OSPIN/Keystore cycles, and main38570691148 passed. Prior failure/pending entries
+below are historical and superseded.
+
+Currentcandidate1.2-dev/code3 adds on-device CameraX/ZXingQR bootstrap, verified
+TLS-before-token, encrypted config commit after real authenticatedstatus, and
+central five-minute elapsed session tied to actual authenticationcallback.
+17 focusedbootstrap +10 lease/decoder tests and2 actual Kotlin/Core HTTPS cases
+passed. Original failures and corrections retained. Finalfullbuild/unit/lint/
+signer +hosted six actualdevice tests are pending, not completed by compilation.
+Two new instrumented cases cover camera-permissiondenial/manualfallback and real
+300-second access plus actualOS-key expiry. No owner app/data/key/signer changed;
+longer/Off choices disabled without an approved key migration.
+
+Read docs/COMPANION_PAIRING_2026-10-14.md and current desktoptracker/resumeevidence.
+Owner permits exact-head-green reviewedPR merge then safe main synchronization;
+do not bypass pending/failedchecks or replaceinstalledapps/data. At1% five-hour
+remaining save/report/pause; prior one-time resumefired and mustnotrecur.
+
+---
+
 ## October 14 latest actual device result — unresolved
 
 Exacthead13694876PR3 failed both API34 runs38531126312/38531121066:

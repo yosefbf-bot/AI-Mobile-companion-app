@@ -56,6 +56,16 @@ class DesktopNodeService(
         val epoch = authorizationEpoch(config) ?: throw GatewayException("PHONE_LOCKED",423,"Unlock the protected phone workspace before continuing.")
         return GatewayRequestLease(epoch, cancellationGeneration.get())
     }
+    fun requireAuthorization(config: DesktopNodeConfig, lease: GatewayRequestLease) = requireAuthorized(config, lease)
+    fun close() {
+        cancelAll()
+        synchronized(this) {
+            cachedClient?.connectionPool?.evictAll()
+            cachedClient?.dispatcher?.executorService?.shutdown()
+            cachedClient = null
+            cachedDestination = null
+        }
+    }
     private fun requireAuthorized(config: DesktopNodeConfig, lease: GatewayRequestLease) {
         if (authorizationEpoch(config) != lease.epoch) throw GatewayException("PHONE_LOCKED",423,"The protected workspace changed. Unlock and retry the retained request.")
         if (cancellationGeneration.get() != lease.cancellation) throw CancellationException("The desktop request was stopped.")

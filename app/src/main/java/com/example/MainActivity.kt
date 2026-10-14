@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
@@ -61,12 +62,12 @@ import com.example.ui.screens.chats.ChatDetailScreen
 import com.example.ui.screens.chats.ChatListScreen
 import com.example.ui.screens.dashboard.DashboardScreen
 import com.example.ui.screens.settings.NodeSettingsScreen
+import com.example.ui.pairing.QrPairingScannerScreen
 import com.example.ui.screens.tasks.TasksScreen
 import com.example.ui.screens.vault.DocumentVaultScreen
 import com.example.ui.screens.workflows.FacilityCaptureScreen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.example.data.crypto.AttachmentUtils
@@ -95,6 +96,7 @@ class MainActivity : FragmentActivity() {
     private var biometricPrompt: BiometricPrompt? = null
     private var resumedForAuthentication = false
     private var notificationRequestInProgress = false
+    private var scanningPairing by mutableStateOf(false)
     private data class ExternalTarget(val route: String, val fingerprint: String, val demo: Boolean)
     private data class ExternalResult(val target: ExternalTarget, val uri: Uri? = null, val bitmap: Bitmap? = null)
     private var externalTarget: ExternalTarget? = null
@@ -158,11 +160,14 @@ class MainActivity : FragmentActivity() {
         externalTarget == null && !notificationRequestInProgress
 
     private fun onDeviceAuthenticated() {
+        if (!unlockPromptState.promptInProgress) return
+        viewModel.biometricAuthManager.recordDeviceAuthentication()
         unlockPromptState.onAuthenticated()
         authenticateWhenReady()
     }
 
     private fun authenticateWhenReady() {
+        EncryptionManager.hasCurrentAccess()
         val ready = authenticationForegroundReady()
         if (unlockPromptState.takeAuthenticated(ready)) {
             if (!viewModel.biometricAuthManager.completeDeviceCredentialAuthentication()) {
@@ -216,6 +221,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun lockProtectedWorkspace() {
+        scanningPairing = false
         // Protect locked recents synchronously; Compose collection can pause at Stop.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         viewModel.lockVault()
@@ -258,6 +264,7 @@ class MainActivity : FragmentActivity() {
                 val secureClinicalMode by viewModel.secureClinicalMode.collectAsStateWithLifecycle()
                 val modelMode by viewModel.modelProcessingMode.collectAsStateWithLifecycle()
                 val isStreamingResponse by viewModel.isStreamingResponse.collectAsStateWithLifecycle()
+                val pairingState by viewModel.pairingState.collectAsStateWithLifecycle()
 
                 val snackbarHostState = remember { SnackbarHostState() }
                 var currentTab by remember { mutableStateOf(ScreenTab.CHAT) }
@@ -312,12 +319,8 @@ class MainActivity : FragmentActivity() {
                 // Every workspace can contain protected records. FLAG_SECURE stays
                 // enforced independently of additional phone processing restrictions.
 
-                LaunchedEffect(isUnlocked) {
-                    if (isUnlocked) {
-                        delay(300_000L)
-                        lockProtectedWorkspace()
-                    }
-                }
+                LaunchedEffect(isUnlocked) { if (!isUnlocked) scanningPairing = false }
+                LaunchedEffect(currentTab) { if (currentTab != ScreenTab.SETTINGS) viewModel.cancelPairing() }
 
                 LaunchedEffect(feedbackMessage) {
                     feedbackMessage?.let {
@@ -339,6 +342,11 @@ class MainActivity : FragmentActivity() {
                                 Text("Lock and retry")
                             }
                         }
+                    } else if (scanningPairing) {
+                        QrPairingScannerScreen(onDecoded = {
+                            scanningPairing = false; currentTab = ScreenTab.SETTINGS; viewModel.beginPairing(it)
+                        }, onCancel = { scanningPairing = false; currentTab = ScreenTab.SETTINGS },
+                            onResourcesChanged = { viewModel.stopPairingScanner = it })
                     } else if (activeSessionId != null) {
                         // Detailed Chat Screen with Voice, Streaming, Attachments, Model Indicator
                         ChatDetailScreen(
@@ -370,6 +378,13 @@ class MainActivity : FragmentActivity() {
                                 Column(Modifier.padding(horizontal = 16.dp, vertical = 6.dp).testTag("desktop_sync_status")) {
                                     com.example.ui.components.ConnectionStatusBadge(status = if(isSyncing) com.example.data.model.ConnectionStatus.SYNCING else connectionStatus, hostIp = nodeConfig.hostIp, lastCheckedAt = lastConnectionCheck, onClick = { viewModel.triggerSync() })
                                     Text(if(nodeConfig.simulatedNodeEnabled) "Demo data · no desktop sync" else if(lastSyncTimestamp > 0) "Last synced: ${java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(lastSyncTimestamp))}" else "Not synced yet · tap status to connect", style = MaterialTheme.typography.labelSmall)
+                                    if (!nodeConfig.isPaired && !nodeConfig.simulatedNodeEnabled) {
+                                        Text("Connect to Private AI on your PC", style = MaterialTheme.typography.titleSmall)
+                                        Row {
+                                            androidx.compose.material3.TextButton(onClick = { scanningPairing = true }, modifier = Modifier.testTag("onboarding_scan_qr")) { Text("Scan desktop QR") }
+                                            androidx.compose.material3.TextButton(onClick = { currentTab = ScreenTab.SETTINGS }) { Text("Manual pairing") }
+                                        }
+                                    } else androidx.compose.material3.TextButton(onClick = { currentTab = ScreenTab.SETTINGS }) { Text("Connection settings") }
                                 }
                             },
                             bottomBar = {
@@ -539,7 +554,10 @@ class MainActivity : FragmentActivity() {
                                         onToggleSecureClinicalMode = { viewModel.setSecureClinicalMode(it) },
                                         onTestConnection = { viewModel.triggerSync() },
                                         onRequestNotificationPermission = { requestNotificationPermission() },
-                                        onLockVault = { lockProtectedWorkspace() }
+                                        onLockVault = { lockProtectedWorkspace() },
+                                        pairingState = pairingState, onPairLink = viewModel::beginPairing,
+                                        onCancelPairing = viewModel::cancelPairing,
+                                        onScanPairingQr = { scanningPairing = true }
                                     )
 
                                     ScreenTab.CAPTURE -> FacilityCaptureScreen(

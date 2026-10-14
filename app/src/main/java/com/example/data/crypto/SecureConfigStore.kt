@@ -37,7 +37,7 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
     }
 
     @Synchronized
-    fun save(config: DesktopNodeConfig) {
+    fun save(config: DesktopNodeConfig, beforeCommit: () -> Unit = {}) {
         require(config.scheme == "https" && !config.simulatedNodeEnabled) { "Only a real HTTPS pairing is persisted." }
         val data = JSONObject().put("version", 2).put("hostIp", config.hostIp)
             .put("port", config.port).put("pairKey", config.pairKey)
@@ -49,8 +49,9 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
             .put("backgroundNotificationsEnabled", config.backgroundNotificationsEnabled)
             .put("secureClinicalMode", config.secureClinicalMode)
         val bytes = cipher.encrypt(data.toString()).toByteArray(Charsets.UTF_8)
+        beforeCommit()
         val stream = file.startWrite()
-        try { stream.write(bytes); file.finishWrite(stream) }
+        try { stream.write(bytes); beforeCommit(); file.finishWrite(stream) }
         catch (e: Exception) { file.failWrite(stream); throw e }
     }
 
