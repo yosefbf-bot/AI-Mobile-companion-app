@@ -1,3 +1,14 @@
+## October 14 corrected device acceptance tests
+
+Read [the current acceptance checkpoint](docs/COMPANION_ACCEPTANCE_2026-10-14.md).
+Full local source suite93/93 and14 focused correction tests passed; builds/lint
+passed with0 errors/43warnings. Production APK/signing/key policy are unchanged.
+Both firstbf4 hosted runs failed and are retained. Three test-only corrections
+retain both raw OS expiry assertions and all UI/permission/lifecycle checks;
+fresh six-case exact-head device checks are required before PR4 merges.
+No owner installation/data/key/pairing change. Earlier pending results below
+are historical; current exact-head CI remains authoritative.
+
 ## October14 current Phase4 checkpoint
 
 Sourcebranch chatgpt/companion-pairing-2026-10-14 starts at verified main7e817069.

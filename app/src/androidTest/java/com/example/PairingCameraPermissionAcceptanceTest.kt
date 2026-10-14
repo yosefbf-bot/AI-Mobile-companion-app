@@ -7,14 +7,14 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -86,13 +86,19 @@ class PairingCameraPermissionAcceptanceTest {
         assertNull("Denied scanning must own no camera resources.", model.stopPairingScanner)
         assertFalse(model.nodeConfig.value.isPaired)
         assertFalse(model.pairingState.value.connecting)
+        // This fixed settings fixture's privacy item is index 6. Bring the
+        // bounded item into composition, then scroll each exact child once;
+        // generic recursive search/scroll exhausted the CI semantics heap in
+        // the Dashboard acceptance case on this small disposable display.
+        rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
         listOf("10", "20", "30", "off").forEach { tag ->
-            rule.onNodeWithTag("node_settings_screen").performScrollToNode(hasTestTag("session_mode_" + tag))
+            rule.onNodeWithTag("session_mode_" + tag).performScrollTo()
             rule.onNodeWithTag("session_mode_" + tag).assertIsNotEnabled()
         }
-        rule.onNodeWithTag("node_settings_screen").performScrollToNode(hasTestTag("session_mode_5"))
+        rule.onNodeWithTag("session_mode_5").performScrollTo()
         rule.onNodeWithTag("session_mode_5").assertIsSelected()
-        rule.onNodeWithTag("node_settings_screen").performScrollToNode(hasTestTag("scan_pairing_qr"))
+        rule.onNodeWithTag("node_settings_screen").performScrollToIndex(2)
+        rule.onNodeWithTag("scan_pairing_qr").performScrollTo()
         rule.onNodeWithTag("scan_pairing_qr").performClick()
         device.pressHome()
         rule.waitUntil(10_000) { rule.activityRule.scenario.state == Lifecycle.State.CREATED }

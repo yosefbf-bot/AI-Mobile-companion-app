@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.SystemClock
+import android.os.Build
 import android.security.keystore.KeyInfo
 import android.security.keystore.UserNotAuthenticatedException
 import android.util.Log
@@ -56,6 +57,10 @@ class ForegroundLeaseKeystoreAcceptanceTest {
             assertNull("The existing vault key must remain nonexportable.", key.encoded)
             assertTrue(info.isUserAuthenticationRequired)
             assertEquals(300, info.userAuthenticationValidityDurationSeconds)
+            @Suppress("DEPRECATION")
+            val securityLevel = if (Build.VERSION.SDK_INT >= 31) info.securityLevel.toString()
+                else "insideSecureHardware=${info.isInsideSecureHardware}"
+            Log.i("PrivateAILeaseAcceptance", "Original key metadata: authSeconds=300; securityLevel=$securityLevel; authEnforcedBySecureHardware=${info.isUserAuthenticationRequirementEnforcedBySecureHardware}")
             val remaining = EncryptionManager.remainingSessionMillis()
             assertTrue(remaining in 1..300_000L)
             val started = SystemClock.elapsedRealtime()
@@ -75,7 +80,24 @@ class ForegroundLeaseKeystoreAcceptanceTest {
             // Read-only test-module lookup bypasses only the APPLICATION guard to
             // prove Android itself rejects this original key after real expiry.
             // No key is generated, changed, exported, deleted or replaced here.
-            SystemClock.sleep(250)
+            // Android 14 Keystore2 uses integer token-age seconds and rejects
+            // only when age.seconds() > AUTH_TIMEOUT. Its 300.x second boundary
+            // can therefore remain valid after our stricter millisecond lease.
+            // AOSP android14-release: keystore2/src/enforcements.rs:651 and
+            // keystore2/src/database.rs:789 (integer milliseconds / 1000):
+            // https://android.googlesource.com/platform/system/security/+/android14-release/keystore2/src/enforcements.rs#651
+            // https://android.googlesource.com/platform/system/security/+/android14-release/keystore2/src/database.rs#789
+            // Cross that bounded platform boundary without authenticating again;
+            // retain both direct OS rejection assertions rather than skip them.
+            val platformBoundaryStarted = SystemClock.elapsedRealtime()
+            while (SystemClock.elapsedRealtime() - platformBoundaryStarted < 2_000L) {
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
+                assertFalse("The app must stay locked while crossing the OS boundary.", EncryptionManager.hasCurrentAccess())
+                SystemClock.sleep(50)
+            }
+            assertFalse("No new OS authentication may extend the key authorization.", device.hasObject(
+                By.clazz("android.widget.EditText").pkg(Pattern.compile("com\\.android\\.(systemui|settings)"))))
+            Log.i("PrivateAILeaseAcceptance", "Direct original-key rejection probe; elapsedMillis=${SystemClock.elapsedRealtime() - started}; appAccess=false")
             assertThrows(UserNotAuthenticatedException::class.java) { VaultCodec.decrypt(protected, key) }
             assertThrows(UserNotAuthenticatedException::class.java) { VaultCodec.encrypt("Must require actual OS authentication", key) }
             assertTrue(store.containsAlias("private_ai_vault_v2"))

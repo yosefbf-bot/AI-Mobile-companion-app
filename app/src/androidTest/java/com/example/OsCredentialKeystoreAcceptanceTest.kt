@@ -9,14 +9,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -184,7 +184,15 @@ class OsCredentialKeystoreAcceptanceTest {
         rule.onNodeWithTag("nav_home").performClick()
         rule.waitUntil(20_000) { rule.onAllNodesWithTag("dashboard_screen").fetchSemanticsNodes().isNotEmpty() }
         val coverageWarning = "No recorded alerts does not establish complete monitoring."
-        rule.onNodeWithTag("dashboard_screen").performScrollToNode(hasText(coverageWarning))
+        assertFalse("This case requires the account-free unpaired fixture.", model.nodeConfig.value.isPaired)
+        assertTrue("The unpaired fixture has no action rows before its alerts item.", model.workflowState.value.actions.isEmpty())
+        // The known empty fixture's alerts item is index 2. Avoid the framework's
+        // recursive search/scroll loop, which exhausted the small CI heap after
+        // the additional onboarding header reduced the viewport. The real exact
+        // warning still has to be brought into view and asserted below.
+        rule.onNodeWithTag("dashboard_screen").performScrollToIndex(2)
+        rule.waitUntil(10_000) { rule.onAllNodesWithText(coverageWarning).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText(coverageWarning).performScrollTo()
         rule.onNodeWithText(coverageWarning).assertIsDisplayed()
         rule.onNodeWithText("All clear").assertDoesNotExist()
         rule.onNodeWithText("Running on PC").assertDoesNotExist()
