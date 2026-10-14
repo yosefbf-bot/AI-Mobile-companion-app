@@ -7,6 +7,7 @@ import android.view.WindowManager
 import androidx.lifecycle.ViewModelProvider
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -23,6 +24,7 @@ import androidx.test.uiautomator.Until
 import com.example.data.crypto.EncryptionManager
 import com.example.data.crypto.VaultUnavailableException
 import com.example.ui.MainViewModel
+import com.example.ui.UnlockPromptState
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,6 +33,7 @@ import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.regex.Pattern
 
 /** Real OS prompt and Android Keystore, only on an explicitly configured disposable test device. */
 @OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)
@@ -50,6 +53,9 @@ class OsCredentialKeystoreAcceptanceTest {
     }
 
     private var phase = "startup"
+    private val systemAuthenticationPackages = Pattern.compile("com\\.android\\.(systemui|settings)")
+    private fun systemCredentialSelector() = By.clazz("android.widget.EditText").pkg(systemAuthenticationPackages)
+    private fun systemPromptSelector() = By.text("Unlock Private AI").pkg(systemAuthenticationPackages)
 
     @Test fun actualOsCredentialUnlocksKeystoreAndUnpairedWorkspaceThenRelocks() {
         try {
@@ -88,25 +94,51 @@ class OsCredentialKeystoreAcceptanceTest {
         val device = UiDevice.getInstance(instrumentation)
         // No app button tap: cold launch must display the real system prompt.
         assertNotNull("Opening a locked app must automatically display Android authentication.", credentialField(device))
-        device.pressBack()
+        cancelSystemAuthentication(device)
+        lateinit var promptState: UnlockPromptState
+        rule.activityRule.scenario.onActivity { activity ->
+            promptState = ViewModelProvider(activity)[UnlockPromptState::class.java]
+        }
+        rule.waitUntil(10_000) { !promptState.promptInProgress }
         rule.waitUntil(10_000) {
             rule.onAllNodesWithText("Try again").fetchSemanticsNodes().isNotEmpty()
         }
         rule.onNodeWithText("Try again").assertIsDisplayed()
+        rule.onNodeWithTag("unlock_biometric_button").assertIsEnabled()
         assertFalse(EncryptionManager.isUnlocked.value)
         rule.onNodeWithTag("nav_chat").assertDoesNotExist()
-        assertFalse("Cancellation must not start another prompt.", device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 1_000))
+        assertNoSystemAuthentication(device, "Cancellation must not start another prompt.")
         rule.activityRule.scenario.recreate()
         rule.onNodeWithText("Try again").assertIsDisplayed()
-        assertFalse("Rotation after cancellation must not start another prompt.", device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 1_000))
+        assertNoSystemAuthentication(device, "Rotation after cancellation must not start another prompt.")
+    }
+
+    private fun cancelSystemAuthentication(device: UiDevice) {
+        val cancel = device.findObject(By.text("Cancel").pkg(systemAuthenticationPackages))
+        if (cancel != null) cancel.click()
+        else {
+            // API 34's credential keyboard consumes the first Back. Only send a
+            // second Back if the original Android credential window is still open.
+            device.pressBack()
+            if (!device.wait(Until.gone(systemCredentialSelector()), 2_000)) device.pressBack()
+        }
+        assertTrue("Cancel must close the actual Android credential field.",
+            device.wait(Until.gone(systemCredentialSelector()), 5_000))
+        assertTrue("Cancel must close the actual Android authentication window.",
+            device.wait(Until.gone(systemPromptSelector()), 5_000))
+    }
+
+    private fun assertNoSystemAuthentication(device: UiDevice, message: String) {
+        assertFalse(message, device.wait(Until.hasObject(systemCredentialSelector()), 1_000))
+        assertFalse(message, device.wait(Until.hasObject(systemPromptSelector()), 1_000))
     }
 
     private fun credentialField(device: UiDevice): androidx.test.uiautomator.UiObject2? {
-        var entry = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5_000)
+        var entry = device.wait(Until.findObject(systemCredentialSelector()), 5_000)
         if (entry == null) {
             // A biometric-capable image can show its explicit credential fallback first.
-            device.findObject(By.text("Use PIN"))?.click()
-            entry = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 10_000)
+            device.findObject(By.text("Use PIN").pkg(systemAuthenticationPackages))?.click()
+            entry = device.wait(Until.findObject(systemCredentialSelector()), 10_000)
         }
         return entry
     }

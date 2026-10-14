@@ -1,3 +1,13 @@
+## October 14 authentication acceptance fixture correction
+
+Read the October 14 section in [the four-phase tracker](docs/FOUR_PHASE_PROGRESS_2026-10-13.md).
+Both API34 runs failed because one Back hid the PIN keyboard without cancelling
+the original system dialog; no second prompt was shown. Corrected test performs
+actual OS cancellation and retains all security assertions and real Keystore cycles.
+Ten focused state cases passed; instrumented APK compiled/signature passed. Full
+unchanged unit output was cached. Production APK/data/key/signer unchanged.
+Fresh hosted device acceptance is pending. Owner merges main.
+
 ## October 13 four-phase source checkpoint
 
 Read [the companion checkpoint](docs/FOUR_PHASE_PROGRESS_2026-10-13.md) first.

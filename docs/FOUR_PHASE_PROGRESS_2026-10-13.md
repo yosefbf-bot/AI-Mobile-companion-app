@@ -55,3 +55,29 @@ remain required. Historical Android acceptance does not validate this changed AP
 Shared execution plan is in desktop `docs/FOUR_PHASE_PROGRESS_2026-10-13.md`.
 Complete Phase 1 hosted/device verification, then Phases 2, 3 and 4 without
 duplicate features or changing the owner installation prematurely.
+
+
+## October 14 hosted authentication acceptance correction
+
+Phase 1 production source is unchanged by this correction. Both exact-head
+Android runs (38506962144 and 38506959005) built, passed unit/lint and retained
+artifacts; each executed four API 34 emulator cases with three pass/one failure.
+The failed cancellation fixture pressed Back once while the PIN keyboard was
+open. Both original logcats show that Back hid the input method; the original
+system credential window remained. Neither trace shows a second authentication
+session before the assertion. This did not demonstrate a production prompt loop.
+
+The test now targets the actual system credential window, cancels it using its
+Cancel action or a bounded second Back while that same window remains, verifies
+it disappears and reaches a terminal callback, then preserves the no-reprompt,
+rotation, locked-data, Retry and three real PIN/Keystore/Notes/relock assertions.
+No production authentication, key, encryption, session duration or signer changes.
+
+Fresh focused unlock-state tests: ten passed, zero failures/skips. Lint remains
+zero errors/42 warnings; full unit result was restored from unchanged Gradle inputs
+(cache), not a newly executed 65-case run. Corrected instrumented APK compilation,
+packaging and signature verification passed. Production APK remains unchanged.
+Test APK SHA-256: `ef21a88d0b00e75476450d752e29696a5582de9cb11dfb3522b0faab1e9e3867`.
+Fresh exact-head hosted device execution is required; local compilation is not a
+passing device result. Sanitized original failures/correction receipts remain in
+the desktop ignored `Validation/four-phase-2026-10-13/`.
