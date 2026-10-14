@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.content.Intent
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -48,8 +50,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.fragment.app.FragmentActivity
+import androidx.biometric.BiometricPrompt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.MainViewModel
+import com.example.ui.UnlockPromptState
+import com.example.data.crypto.BiometricStatus
 import com.example.ui.components.BiometricLockOverlay
 import com.example.ui.screens.alerts.AlertsScreen
 import com.example.ui.screens.chats.ChatDetailScreen
@@ -86,7 +91,10 @@ enum class ScreenTab(val title: String, val testTag: String) {
 class MainActivity : FragmentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
-    private var authenticationError by mutableStateOf<String?>(null)
+    private val unlockPromptState: UnlockPromptState by viewModels()
+    private var biometricPrompt: BiometricPrompt? = null
+    private var resumedForAuthentication = false
+    private var notificationRequestInProgress = false
     private data class ExternalTarget(val route: String, val fingerprint: String, val demo: Boolean)
     private data class ExternalResult(val target: ExternalTarget, val uri: Uri? = null, val bitmap: Bitmap? = null)
     private var externalTarget: ExternalTarget? = null
@@ -95,18 +103,22 @@ class MainActivity : FragmentActivity() {
     private val filePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         externalTarget?.let { target -> if (uri != null) pendingExternal = ExternalResult(target, uri = uri) }
         externalTarget = null
+        authenticateWhenReady()
     }
     private val camera = registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap ->
         externalTarget?.let { target -> if (bitmap != null) pendingExternal = ExternalResult(target, bitmap = bitmap) }
         externalTarget = null
+        authenticateWhenReady()
     }
     private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted && externalTarget != null) camera.launch(null)
-        else { externalTarget = null; evidenceError = "Camera access was not granted." }
+        else { externalTarget = null; evidenceError = "Camera access was not granted."; authenticateWhenReady() }
     }
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        notificationRequestInProgress = false
         if (granted) FollowUpNotifications.configure(this, viewModel.nodeConfig.value.backgroundNotificationsEnabled)
         else evidenceError = "Notification permission is off. Follow-ups remain pending on the desktop."
+        authenticateWhenReady()
     }
 
     private fun target(route: String): ExternalTarget? {
@@ -126,34 +138,95 @@ class MainActivity : FragmentActivity() {
     }
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notificationRequestInProgress = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     private val deviceCredential = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode != Activity.RESULT_OK ||
-            !viewModel.biometricAuthManager.completeDeviceCredentialAuthentication()) {
-            authenticationError = "Device authentication did not unlock the vault. Existing data was preserved."
-        } else authenticationError = null
+        if (result.resultCode == Activity.RESULT_OK) onDeviceAuthenticated()
+        else unlockPromptState.onFailure("Device authentication did not complete. Try again when ready.", terminal = true)
     }
 
     private fun authenticate() {
-        authenticationError = null
+        if (unlockPromptState.beginRetry(!viewModel.isUnlocked.value, authenticationForegroundReady()))
+            launchAuthentication()
+    }
+
+    private fun authenticationForegroundReady(): Boolean = resumedForAuthentication &&
+        window.decorView.hasWindowFocus() && !supportFragmentManager.isStateSaved &&
+        externalTarget == null && !notificationRequestInProgress
+
+    private fun onDeviceAuthenticated() {
+        unlockPromptState.onAuthenticated()
+        authenticateWhenReady()
+    }
+
+    private fun authenticateWhenReady() {
+        val ready = authenticationForegroundReady()
+        if (unlockPromptState.takeAuthenticated(ready)) {
+            if (!viewModel.biometricAuthManager.completeDeviceCredentialAuthentication()) {
+                unlockPromptState.onFailure("The protected vault key could not be unlocked. Existing data was preserved.", terminal = true)
+            }
+        } else if (unlockPromptState.beginAutomatic(!viewModel.isUnlocked.value, ready)) {
+            launchAuthentication()
+        }
+    }
+
+    private fun launchAuthentication() {
         val auth = viewModel.biometricAuthManager
-        if (auth.requiresLegacyDeviceCredential) {
-            val intent = auth.deviceCredentialIntent()
-            if (intent == null) authenticationError = "Set up this phone's Android screen lock before opening Private AI."
-            else deviceCredential.launch(intent)
-        } else auth.promptBiometricAuth(this, onSuccess = { authenticationError = null },
-            onError = { authenticationError = it })
+        if (auth.checkBiometricAvailability() != BiometricStatus.AVAILABLE) {
+            unlockPromptState.onFailure("Set up this phone's Android screen lock in device security settings, then try again.", terminal = true)
+            return
+        }
+        try {
+            if (auth.requiresLegacyDeviceCredential) {
+                val intent = auth.deviceCredentialIntent()
+                if (intent == null) unlockPromptState.onFailure("Android device authentication is unavailable. Check device security settings.", terminal = true)
+                else deviceCredential.launch(intent)
+            } else biometricPrompt?.let { auth.promptBiometricAuth(it) }
+                ?: unlockPromptState.onFailure("Device authentication is unavailable. Try again.", terminal = true)
+        } catch (_: IllegalStateException) {
+            unlockPromptState.onFailure("Device authentication could not open safely. Try again.", terminal = true)
+        } catch (_: android.content.ActivityNotFoundException) {
+            unlockPromptState.onFailure("Android device authentication is unavailable. Check device security settings.", terminal = true)
+        }
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        resumedForAuthentication = true
+        authenticateWhenReady()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && resumedForAuthentication) authenticateWhenReady()
+    }
+
+    override fun onPause() {
+        resumedForAuthentication = false
+        super.onPause()
     }
 
     override fun onStop() {
-        viewModel.lockVault()
+        lockProtectedWorkspace()
+        unlockPromptState.onStopped(isChangingConfigurations)
         super.onStop()
+    }
+
+    private fun lockProtectedWorkspace() {
+        // Protect locked recents synchronously; Compose collection can pause at Stop.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        viewModel.lockVault()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        biometricPrompt = viewModel.biometricAuthManager.createBiometricPrompt(this,
+            onAuthenticated = ::onDeviceAuthenticated,
+            onError = { unlockPromptState.onFailure(it, terminal = true) },
+            onFailed = { unlockPromptState.onFailure(it, terminal = false) })
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
 
@@ -236,22 +309,13 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                // Secure Clinical Mode enforcement (FLAG_SECURE blocks screenshots and recents preview)
-                LaunchedEffect(secureClinicalMode, isUnlocked) {
-                    if (secureClinicalMode || !isUnlocked) {
-                        window.setFlags(
-                            WindowManager.LayoutParams.FLAG_SECURE,
-                            WindowManager.LayoutParams.FLAG_SECURE
-                        )
-                    } else {
-                        window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                    }
-                }
+                // Every workspace can contain protected records. FLAG_SECURE stays
+                // enforced independently of additional phone processing restrictions.
 
                 LaunchedEffect(isUnlocked) {
                     if (isUnlocked) {
                         delay(300_000L)
-                        viewModel.lockVault()
+                        lockProtectedWorkspace()
                     }
                 }
 
@@ -264,12 +328,14 @@ class MainActivity : FragmentActivity() {
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (!isUnlocked) {
-                        BiometricLockOverlay(onTriggerBiometrics = { authenticate() }, error = authenticationError)
+                        BiometricLockOverlay(onTriggerBiometrics = { authenticate() }, error = unlockPromptState.error,
+                            authenticationInProgress = unlockPromptState.promptInProgress,
+                            onOpenSecuritySettings = { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) })
                     } else if (!vaultReady) {
                         Column(Modifier.fillMaxSize().padding(24.dp),
                             verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(vaultError ?: "Opening the protected workspace… Existing records will be preserved.")
-                            androidx.compose.material3.Button(onClick = { viewModel.lockVault() }) {
+                            androidx.compose.material3.Button(onClick = { lockProtectedWorkspace() }) {
                                 Text("Lock and retry")
                             }
                         }
@@ -473,7 +539,7 @@ class MainActivity : FragmentActivity() {
                                         onToggleSecureClinicalMode = { viewModel.setSecureClinicalMode(it) },
                                         onTestConnection = { viewModel.triggerSync() },
                                         onRequestNotificationPermission = { requestNotificationPermission() },
-                                        onLockVault = { viewModel.lockVault() }
+                                        onLockVault = { lockProtectedWorkspace() }
                                     )
 
                                     ScreenTab.CAPTURE -> FacilityCaptureScreen(

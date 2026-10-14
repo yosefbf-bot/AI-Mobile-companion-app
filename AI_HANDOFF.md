@@ -1,3 +1,15 @@
+## October 13 four-phase source checkpoint
+
+Read [the companion checkpoint](docs/FOUR_PHASE_PROGRESS_2026-10-13.md) first.
+Automatic OS prompting, fixed capture protection, persisted processing preference
+and lifecycle-safe polling are implemented on the new review branch.
+Combined 65 local cases pass, lint has zero errors/42 warnings, both APKs build,
+and final instrumented sources compile. Actual device execution is pending.
+Do not claim QR/longer sessions complete or transfer older device acceptance.
+No installation, key rotation, signer or pairing change. The owner merges main.
+Shared plan is in the desktop tracker. Resume this thread once October 14 at
+3:25 a.m. America/New_York after the 1% checkpoint; fetch both mains first.
+
 ## October 12 final hosted validation result
 
 Read [the completed validation checkpoint](docs/FINAL_VALIDATION_2026-10-12.md)

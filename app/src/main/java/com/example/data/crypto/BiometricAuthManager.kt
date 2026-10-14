@@ -37,23 +37,25 @@ class BiometricAuthManager(private val context: Context) {
         true
     } catch (_: Exception) { lock(); false }
 
-    fun promptBiometricAuth(activity: FragmentActivity, title: String = "Unlock Private AI",
-        subtitle: String = "Authenticate with the device screen lock or biometrics",
-        onSuccess: () -> Unit, onError: (String) -> Unit) {
-        if (requiresLegacyDeviceCredential) {
-            onError("Use the Android device screen lock."); return
-        }
-        val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity),
+    // Recreate early in onCreate so AndroidX rebinds the retained prompt's callback
+    // after rotation. Report OS success first; the Activity checks foreground state
+    // before actually granting application access through the Keystore check.
+    fun createBiometricPrompt(activity: FragmentActivity, onAuthenticated: () -> Unit,
+        onError: (String) -> Unit, onFailed: (String) -> Unit): BiometricPrompt =
+        BiometricPrompt(activity, ContextCompat.getMainExecutor(activity),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    if (completeDeviceCredentialAuthentication()) onSuccess()
-                    else onError("The protected vault key could not be unlocked. Existing data was preserved.")
+                    onAuthenticated()
                 }
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     lock(); onError("Device authentication did not complete.")
                 }
-                override fun onAuthenticationFailed() { onError("Device authentication was not verified.") }
+                // A rejected biometric is nonterminal: Android still owns this attempt.
+                override fun onAuthenticationFailed() { onFailed("Device authentication was not verified.") }
             })
+
+    fun promptBiometricAuth(prompt: BiometricPrompt, title: String = "Unlock Private AI",
+        subtitle: String = "Authenticate with the device screen lock or biometrics") {
         prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle(title).setSubtitle(subtitle)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
             .build())
