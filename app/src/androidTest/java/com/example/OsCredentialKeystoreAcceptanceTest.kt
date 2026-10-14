@@ -5,6 +5,7 @@ import android.content.Intent
 import android.util.Log
 import android.view.WindowManager
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -82,8 +83,16 @@ class OsCredentialKeystoreAcceptanceTest {
         val launchIntent = instrumentation.targetContext.packageManager
             .getLaunchIntentForPackage(instrumentation.targetContext.packageName)
         assertNotNull("The existing app launch intent must be available.", launchIntent)
-        UiDevice.getInstance(instrumentation).pressHome()
-        instrumentation.waitForIdleSync()
+        assertTrue("Home must reach the real launcher.", UiDevice.getInstance(instrumentation).pressHome())
+        // Idle main work does not establish that the Home animation delivered
+        // onStop. A fast relaunch can instead produce only pause/resume, which
+        // never leaves the existing authentication entry. Observe the real stop;
+        // do not force an artificial ActivityScenario lifecycle transition.
+        rule.waitUntil(10_000) {
+            rule.activityRule.scenario.state == Lifecycle.State.CREATED
+        }
+        assertFalse("The stopped workspace must remain locked.", EncryptionManager.isUnlocked.value)
+        Log.i("PrivateAIAcceptance", "Home background stop observed before relaunch")
         instrumentation.targetContext.startActivity(launchIntent!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 

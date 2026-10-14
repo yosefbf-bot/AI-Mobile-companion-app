@@ -81,3 +81,33 @@ Test APK SHA-256: `ef21a88d0b00e75476450d752e29696a5582de9cb11dfb3522b0faab1e9e3
 Fresh exact-head hosted device execution is required; local compilation is not a
 passing device result. Sanitized original failures/correction receipts remain in
 the desktop ignored `Validation/four-phase-2026-10-13/`.
+
+## October 14 actual Home transition correction
+
+Both `13694876` API 34 runs (38531126312 and 38531121066) passed cancellation,
+rotation and two real OS PIN/Keystore/Notes/relock cycles. Each then failed the
+third credential-field assertion: the test relaunched 197/309 milliseconds after
+Home, and both continuous logs show PAUSED then RESUMED without STOPPED. No new
+Android authentication request was created. Draining currently idle main work
+did not wait for the actual Home transition to deliver `onStop`, which rearms
+automatic authentication for a new background entry.
+
+The test now waits at most ten seconds after real Home for the actual stopped
+ActivityScenario state, asserts the workspace remains locked and logs that stop
+before the existing real launch. It does not force a lifecycle transition, tap
+Retry for return, bypass a callback or weaken the three real authentication cycles.
+Production authentication, keys, privacy flags, session duration and signer are
+unchanged. The real cancellation and rotation assertions remain mandatory.
+
+Fresh focused state execution passed all ten cases with zero failures, errors or
+skips. Lint has zero errors/42 warnings; instrumented sources compiled and the test
+APK packaged in the same successful 1m 15s Gradle invocation. The new test APK
+signature verifies with the existing debug certificate; SHA-256 is
+`36ef03ac81ceb8ce65c7b01104be22445cdc0ea8f078315c7b109dfaf8c8e9bb`.
+The production APK remains unchanged. The full unit suite was not repeated for
+this test-only barrier; both failed hosted heads had 64 passes and the one external
+fixture skip, lint zero errors/75 warnings, and successful retained artifacts.
+Fresh exact-head hosted device acceptance remains required. No local installation
+or physical-device execution occurred. Sanitized paired lifecycle traces, XML,
+signature and correction receipt are retained as `android-home-stop-barrier-*`
+in the desktop ignored validation directory.
