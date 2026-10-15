@@ -28,6 +28,11 @@ import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 import javax.crypto.KeyGenerator
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
@@ -49,6 +54,7 @@ class BootstrapPairingTest {
     private val chatRequests = AtomicInteger()
     @Volatile private var beforeExchange: (() -> Unit)? = null
     @Volatile private var beforeSave: (() -> Unit)? = null
+    @Volatile private var beforeDecrypt: (() -> Unit)? = null
     @Volatile private var dropResponse = false
     @Volatile private var redirect = false
     @Volatile private var denyStatus = false
@@ -106,7 +112,7 @@ class BootstrapPairingTest {
         val key=KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()
         cipher=object:VaultCipher {
             override fun encrypt(plaintext:String):String { beforeSave?.invoke();return VaultCodec.encrypt(plaintext,key) }
-            override fun decrypt(encryptedPayload:String)=VaultCodec.decrypt(encryptedPayload,key)
+            override fun decrypt(encryptedPayload:String):String { beforeDecrypt?.invoke();return VaultCodec.decrypt(encryptedPayload,key) }
         }
         previous=DesktopNodeConfig(hostIp="127.0.0.1",port=server.address.port,pairKey="A".repeat(43),
             friendlyName="Existing synthetic pairing",batteryMode=BatteryOptimizationMode.MANUAL_ONLY,secureClinicalMode=true,
@@ -115,9 +121,24 @@ class BootstrapPairingTest {
         database=Room.inMemoryDatabaseBuilder(context,AppDatabase::class.java).allowMainThreadQueries().build()
         repository=PrivateAIRepository(database,configStore=storage,cipher=cipher)
     }
-    @After fun cleanup() { beforeSave=null;repository.close();database.close();server.stop(0);executor.shutdownNow();storage.clear() }
+    @After fun cleanup() { beforeSave=null;beforeDecrypt=null;repository.close();database.close();server.stop(0);executor.shutdownNow();storage.clear() }
     private suspend fun open() { repository.onUnlocked().join();assertTrue(repository.vaultReady.value) }
     private fun unchanged() { assertEquals(previous,repository.nodeConfig.value);assertEquals(previous,storage.load()) }
+    private class ControlledDispatcher : CoroutineDispatcher() {
+        private val tasks = LinkedBlockingQueue<Runnable>()
+        @Volatile var onDispatch: (() -> Unit)? = null
+        override fun dispatch(context: CoroutineContext, block: Runnable) { onDispatch?.invoke();tasks.add(block) }
+        fun runNext() { val task=tasks.poll(10,TimeUnit.SECONDS);assertNotNull("Expected a controlled coroutine continuation",task);task!!.run() }
+        fun finish(job: Job) {
+            // Room child cleanup may complete on its own dispatcher without dispatching
+            // another controlled continuation. Wake for either event, without timing polls.
+            val completed = Runnable {}
+            val registration = job.invokeOnCompletion { tasks.add(completed) }
+            try { repeat(16) { if(job.isCompleted)return;runNext() };assertTrue("Controlled opening must finish",job.isCompleted) }
+            finally { registration.dispose();tasks.remove(completed) }
+        }
+        fun runPending() { repeat(16) { val task=tasks.poll() ?: return;task.run() } }
+    }
     private suspend fun failure(code: String, operation: suspend () -> Unit) {
         try { operation();fail("Pairing must fail: $code") } catch (e: GatewayException) {
             assertEquals(code,e.code);assertFalse(e.message.orEmpty().contains(token));assertFalse(e.message.orEmpty().contains("privateai://"))
@@ -194,6 +215,38 @@ class BootstrapPairingTest {
         open();beforeExchange={repository.onLocked()}
         try { repository.pairSecure(link());fail("Old unlock epoch cannot save") } catch (_:CancellationException) {}
         assertFalse(repository.vaultReady.value);unchanged()
+    }
+    @Test fun lockPublishesClosedStateBeforePairingCancellationDispatch()=runBlocking {
+        repository.close()
+        val dispatcher=ControlledDispatcher()
+        repository=PrivateAIRepository(database,configStore=storage,cipher=cipher,dispatcher=dispatcher)
+        val opened=repository.onUnlocked();dispatcher.finish(opened);assertTrue(repository.vaultReady.value)
+        val reached=CountDownLatch(1);val release=CountDownLatch(1);val cancelled=CountDownLatch(1)
+        val observed=CopyOnWriteArrayList<Boolean>()
+        beforeExchange={reached.countDown();assertTrue("Release the synthetic response",release.await(10,TimeUnit.SECONDS))}
+        val attempt=async(start=CoroutineStart.UNDISPATCHED) { repository.pairSecure(link()) }
+        try {
+            dispatcher.runNext();assertTrue(reached.await(10,TimeUnit.SECONDS))
+            dispatcher.onDispatch={observed.add(repository.vaultReady.value);cancelled.countDown()}
+            repository.onLocked()
+            assertTrue("Cancellation must dispatch its suspended continuation",cancelled.await(10,TimeUnit.SECONDS))
+            assertTrue(observed.isNotEmpty());assertFalse("Every cancellation observer must see a closed vault",observed.any { it })
+            dispatcher.onDispatch=null;release.countDown();dispatcher.runNext()
+            try { attempt.await();fail("Revoked pairing must be cancelled") } catch (_:CancellationException) {}
+            assertFalse(repository.vaultReady.value);unchanged()
+        } finally { dispatcher.onDispatch=null;release.countDown();attempt.cancel();dispatcher.runPending() }
+    }
+    @Test fun queuedAndReentrantUnlockCannotReopenARevokedWorkspace() {
+        repository.close()
+        val dispatcher=ControlledDispatcher()
+        repository=PrivateAIRepository(database,configStore=storage,cipher=cipher,dispatcher=dispatcher)
+        val queued=repository.onUnlocked();repository.onLocked();dispatcher.finish(queued)
+        assertFalse(repository.vaultReady.value)
+        beforeDecrypt={beforeDecrypt=null;repository.onLocked()}
+        val reentrant=repository.onUnlocked();dispatcher.finish(reentrant)
+        assertFalse(repository.vaultReady.value)
+        val valid=repository.onUnlocked();dispatcher.finish(valid)
+        assertTrue(repository.vaultReady.value);unchanged()
     }
     @Test fun changedConfigurationDuringExchangeCannotBeOverwrittenByOldPairingAttempt()=runBlocking {
         open();val settingsJob=CompletableDeferred<Job>()

@@ -82,11 +82,11 @@ class PrivateAIRepository(
     val notifications = selectedDatabase.flatMapLatest { it.taskDao().getAllNotifications() }
         .combine(vaultReady) { rows, ready -> if (ready) rows.map { VaultRecords.decode(it, cipher) } else emptyList() }
 
-    fun onUnlocked(): Job {
-        val generation = synchronized(pairingCommitGuard) { ++workspaceGeneration }
-        opening?.cancel()
-        return scope.launch {
+    fun onUnlocked(): Job = synchronized(pairingCommitGuard) {
+        val generation = ++workspaceGeneration
         _vaultReady.value = false
+        opening?.cancel()
+        scope.launch {
         try {
             database.migrateLegacyContent(cipher)
             _nodeConfig.value = configStore?.load() ?: _nodeConfig.value
@@ -94,17 +94,23 @@ class PrivateAIRepository(
             selectWorkspace()
             _lastSyncTimestamp.value = configStore?.lastSync(_nodeConfig.value) ?: 0
             selectedDatabase.value.migrateLegacyContent(cipher)
-            ensureActive()
-            check(generation == workspaceGeneration)
-            _vaultReady.value = true
+            synchronized(pairingCommitGuard) {
+                ensureActive()
+                check(generation == workspaceGeneration)
+                _vaultReady.value = true
+            }
             if (_nodeConfig.value.simulatedNodeEnabled) seedDemo()
             _lastError.value = null
             restartPolling(generation)
             if (_nodeConfig.value.isPaired || _nodeConfig.value.simulatedNodeEnabled) checkConnection()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            if (generation == workspaceGeneration) _vaultReady.value = false
-            _lastError.value = "The protected workspace could not be opened. Unlock again or use the recovery instructions; no data was erased."
+            synchronized(pairingCommitGuard) {
+                if (generation == workspaceGeneration) {
+                    _vaultReady.value = false
+                    _lastError.value = "The protected workspace could not be opened. Unlock again or use the recovery instructions; no data was erased."
+                }
+            }
         }
         }.also { opening = it }
     }
@@ -128,9 +134,11 @@ class PrivateAIRepository(
     }
 
     fun onLocked() = synchronized(pairingCommitGuard) {
-        cancelPairing()
+        // Cancellation can dispatch continuations immediately on another thread.
+        // Publish revocation before any transport or job observes cancellation.
         _vaultReady.value = false
         ++workspaceGeneration
+        cancelPairing()
         opening?.cancel(); polling?.cancel(); activeRequests.keys.forEach { it.cancel() }; nodeService.cancelAll()
         _connectionStatus.value = ConnectionStatus.DISCONNECTED
         _nodeStats.value = NodeStats()
@@ -185,16 +193,20 @@ class PrivateAIRepository(
         return@synchronized scope.launch {
             try {
                 selectedDatabase.value.migrateLegacyContent(cipher)
-                ensureActive()
-                check(generation == workspaceGeneration)
-                _vaultReady.value = true
+                synchronized(pairingCommitGuard) {
+                    ensureActive()
+                    check(generation == workspaceGeneration)
+                    _vaultReady.value = true
+                }
                 _lastSyncTimestamp.value = configStore?.lastSync(newConfig) ?: 0
                 if (newConfig.simulatedNodeEnabled) seedDemo()
                 restartPolling(generation)
                 checkConnection()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (generation == workspaceGeneration) { _vaultReady.value = false; _lastError.value = "The selected protected workspace could not be opened. No data was erased." }
+                synchronized(pairingCommitGuard) {
+                    if (generation == workspaceGeneration) { _vaultReady.value = false; _lastError.value = "The selected protected workspace could not be opened. No data was erased." }
+                }
             }
         }.also { opening = it }
     }

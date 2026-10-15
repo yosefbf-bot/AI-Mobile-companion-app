@@ -93,6 +93,7 @@ class PairingCameraPermissionAcceptanceTest {
         // loops. Use a finite number of actual scroll actions below, requiring
         // visibility and progress rather than retrying until the heap is full.
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
+        settleSettingsScroll()
         listOf("10", "20", "30", "off").forEach { tag ->
             showSettingsControl("session_mode_" + tag, direction = 1f)
             rule.onNodeWithTag("session_mode_" + tag).assertIsNotEnabled()
@@ -100,6 +101,7 @@ class PairingCameraPermissionAcceptanceTest {
         showSettingsControl("session_mode_5", direction = -1f)
         rule.onNodeWithTag("session_mode_5").assertIsSelected()
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(2)
+        settleSettingsScroll()
         showSettingsControl("scan_pairing_qr", direction = 1f)
         rule.onNodeWithTag("scan_pairing_qr").performClick()
         device.pressHome()
@@ -123,10 +125,23 @@ class PairingCameraPermissionAcceptanceTest {
                 assertTrue("The actual settings scroll action must be accepted.",
                     scroll(0f, direction * viewport.boundsInRoot.height * 0.6f))
             }
-            rule.waitForIdle()
+            settleSettingsScroll()
             val after = settings.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
-            assertTrue("No scrolling progress while bringing $tag into view at bounded step $step.", before != after)
+            assertTrue("No scrolling progress while bringing $tag into view at bounded step $step (before=$before, after=$after).", before != after)
         }
         control.assertIsDisplayed()
+    }
+
+    private fun settleSettingsScroll() {
+        // Compose 1.7.2 ScrollBy/ScrollToIndex enqueue coroutines and return before
+        // scrolling. Its idler only advances time for frame/snapshot/recomposer
+        // work, so the StandardTestDispatcher launch may not have started yet.
+        // One frame runs queued work on the configured test scheduler; idle then
+        // finishes the real scroll animation before measuring actual progress.
+        // Official source: foundation-android 1.7.2 Scrollable.kt:520-524 and
+        // LazyLayoutSemantics.kt:197-207; ui-test-android 1.7.2
+        // ComposeIdlingResource.android.kt:59-78 (Google Maven source artifacts).
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
     }
 }

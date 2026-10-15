@@ -1,4 +1,49 @@
-# October 14 companion acceptance checkpoint
+# October 15 current companion acceptance checkpoint
+
+Current source is `1.2-dev`, code `3`, on
+`chatgpt/companion-pairing-2026-10-14`, from verified main
+`7e817069468a5106f35a6908e916dad92e72e1ef`. The production repository changed:
+locking now publishes the closed workspace and advances its generation before
+cancelling transport/jobs. Unlock/configuration workers check their generation
+and publish readiness under the same existing commit guard. Stale workers cannot
+reopen a revoked workspace. Two deterministic controlled-dispatcher regressions
+cover cancellation observers and queued/reentrant unlocks.
+
+The final local full suite passed **95/95**, with **zero failures, errors or
+skips**, including both actual Kotlin-to-desktop Core/SQLite/pinned-HTTPS
+interoperability cases (legacy and v2 pairing). Focused bootstrap coverage passed
+19/19. Both APKs built, the frozen camera test compiled, and final lint passed
+with **zero errors / 43 warnings**. The camera acceptance fixture now advances
+its actual Compose scheduler before checking bounded scroll progress; all
+visibility, OS-permission and lifecycle assertions remain required.
+
+Actual APK SHA-256 values:
+
+- App: `a8312afcbb8f9615610bd768c53b82f616e55155737188f5fe7667e4082b7563`
+- Instrumented test: `e7a357ce0ce59582f363a018a39da10a567fcb619f579b505754fb65a42e7092`
+
+Both verify with the existing signer
+`4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd`.
+The app ID, encrypted records, pairing format, immutable 300-second Keystore
+configuration and signing compatibility are unchanged. The production APK is
+**new**; earlier unchanged-APK statements below describe historical checkpoints.
+
+Fresh exact-head hosted execution of **all six instrumented cases** remains
+pending and is required before PR4 merges. Prior `347a128` evidence is not
+acceptance for this new source: its push exposed the repository cancellation
+ordering race, and its PR device run passed five cases but stopped in the camera
+fixture's scheduler/progress assertion. First failure XML/logs remain preserved,
+including the initial full95 regression-helper completion-wakeup failure; that
+helper now wakes on actual job completion instead of expecting another dispatch.
+No security assertions were removed. Local compilation does not establish
+physical-phone camera, microphone, LAN/VPN, background-notification, OEM or
+signing-compatible upgrade acceptance. Owner apps, data, keys and pairings were
+not installed over or changed. The isolated synthetic gateway is closed and
+this validation's Gradle daemons are stopped.
+
+## Historical October 14 checkpoints
+
+### October 14 companion acceptance checkpoint
 
 Current source is 1.2-dev, code 3, on the reviewed pairing branch from
 main `7e817069468a5106f35a6908e916dad92e72e1ef`. Production APK remains

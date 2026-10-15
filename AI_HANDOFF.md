@@ -1,3 +1,30 @@
+## October 15 current repository-lock regression checkpoint
+
+Read [current acceptance](docs/COMPANION_ACCEPTANCE_2026-10-14.md).
+Production repository locking now revokes readiness/generation before cancelling
+I/O, and unlock/config ready publication shares the commit guard. Two
+deterministic cancellation/queued-unlock regressions were added. Full local
+suite **95/95**, zero failures/errors/skips, including **both actual Core/SQLite/
+pinned-HTTPS legacy and v2 interoperability cases**; focused bootstrap19/19.
+App/testAPK builds and final lint passed (0 errors,43 warnings). Camera fixture
+scheduler correction retains bounded real scrolling and all security assertions.
+
+New appAPK SHA256 `a8312afcbb8f9615610bd768c53b82f616e55155737188f5fe7667e4082b7563`;
+new testAPK `e7a357ce0ce59582f363a018a39da10a567fcb619f579b505754fb65a42e7092`.
+Existing signer `4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd`
+verified for both. Version1.2-dev/code3, appID, records, original300-second key and
+pairings preserved; owner apps/data not installed over. Source is based on
+verified main7e817069; root owns fresh review commit/publication.
+
+**All six fresh exact-head hosted device cases remain pending.** Keep PR4 draft
+until all current-head checks pass. Prior347 push/unit and camera-device failures
+and first full95 helper failure are preserved; do not represent old device runs
+or local compilation as current device acceptance. Synthetic fixture closed;
+controlled Gradle daemons stopped. Earlier sections below are historical,
+including statements that the former c59247 production APK was unchanged.
+
+---
+
 ## October 14 finite-scroll device-test correction
 
 Both e67b323 device runs passed real app expiry and both raw original-key
