@@ -1,3 +1,10 @@
+## October14 current companion source
+
+See [Local QR pairing](COMPANION_PAIRING_2026-10-14.md). Newsource1.2-dev/code3
+adds local secure QR, retains manual/existingpairings and encrypted records,
+and preserves five-minute nonexportable-key sessions. Earlier checkpoints below
+are historical; finalsource/device/release results remain separate gates.
+
 # Android companion: shared desktop workflows
 
 Implementation checkpoint: 2026-10-05. Based on Android main

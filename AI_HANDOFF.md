@@ -1,3 +1,81 @@
+## October 15 current repository-lock regression checkpoint
+
+Read [current acceptance](docs/COMPANION_ACCEPTANCE_2026-10-14.md).
+Production repository locking now revokes readiness/generation before cancelling
+I/O, and unlock/config ready publication shares the commit guard. Two
+deterministic cancellation/queued-unlock regressions were added. Full local
+suite **95/95**, zero failures/errors/skips, including **both actual Core/SQLite/
+pinned-HTTPS legacy and v2 interoperability cases**; focused bootstrap19/19.
+App/testAPK builds and final lint passed (0 errors,43 warnings). Camera fixture
+scheduler correction retains bounded real scrolling and all security assertions.
+
+New appAPK SHA256 `a8312afcbb8f9615610bd768c53b82f616e55155737188f5fe7667e4082b7563`;
+new testAPK `e7a357ce0ce59582f363a018a39da10a567fcb619f579b505754fb65a42e7092`.
+Existing signer `4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd`
+verified for both. Version1.2-dev/code3, appID, records, original300-second key and
+pairings preserved; owner apps/data not installed over. Source is based on
+verified main7e817069; root owns fresh review commit/publication.
+
+**All six fresh exact-head hosted device cases remain pending.** Keep PR4 draft
+until all current-head checks pass. Prior347 push/unit and camera-device failures
+and first full95 helper failure are preserved; do not represent old device runs
+or local compilation as current device acceptance. Synthetic fixture closed;
+controlled Gradle daemons stopped. Earlier sections below are historical,
+including statements that the former c59247 production APK was unchanged.
+
+---
+
+## October 14 finite-scroll device-test correction
+
+Both e67b323 device runs passed real app expiry and both raw original-key
+rejection assertions (software OS/framework proof, not physical TEE acceptance).
+Only3 of6 cases attempted:2 passed, OS-credential UI case exhausted its192MB
+heap in Compose1.7.2's looping performScrollTo after known-index scroll succeeded.
+The new two-file test correction removes that redundant loop and caps remaining
+camera/settings scroll actions, retaining every visible/auth/permission assertion.
+No production heap, crypto, key, database or session-policy change. Fresh14 focused
+units, testAPK build and lint passed;0errors43warnings. Production APK remains
+c59247c71d8faf990af853b0ba6416696b7e1a9ffe5194db68518595c6f93bbb;
+latesttestAPK4e71bda1c6270174d57f96337eaae6692e1544de2c784e72db02c652ae1ac0e7,
+signer unchanged. All6 current-head hosted cases must pass before PR4 merges.
+Original bf4/e67 archives, XML and first stacks remain preserved; never repeat
+unproved hardware or completed-release claims. Owner app/data/pairings untouched.
+
+## October 14 corrected device acceptance tests
+
+Read [the current acceptance checkpoint](docs/COMPANION_ACCEPTANCE_2026-10-14.md).
+Full local source suite93/93 and14 focused correction tests passed; builds/lint
+passed with0 errors/43warnings. Production APK/signing/key policy are unchanged.
+Both firstbf4 hosted runs failed and are retained. Three test-only corrections
+retain both raw OS expiry assertions and all UI/permission/lifecycle checks;
+fresh six-case exact-head device checks are required before PR4 merges.
+No owner installation/data/key/pairing change. Earlier pending results below
+are historical; current exact-head CI remains authoritative.
+
+## October14 current Phase4 checkpoint
+
+Sourcebranch chatgpt/companion-pairing-2026-10-14 starts at verified main7e817069.
+Phase1 PR3 is merged; both exact-head device runs passed4/4 cases with actual
+OSPIN/Keystore cycles, and main38570691148 passed. Prior failure/pending entries
+below are historical and superseded.
+
+Currentcandidate1.2-dev/code3 adds on-device CameraX/ZXingQR bootstrap, verified
+TLS-before-token, encrypted config commit after real authenticatedstatus, and
+central five-minute elapsed session tied to actual authenticationcallback.
+17 focusedbootstrap +10 lease/decoder tests and2 actual Kotlin/Core HTTPS cases
+passed. Original failures and corrections retained. Finalfullbuild/unit/lint/
+signer +hosted six actualdevice tests are pending, not completed by compilation.
+Two new instrumented cases cover camera-permissiondenial/manualfallback and real
+300-second access plus actualOS-key expiry. No owner app/data/key/signer changed;
+longer/Off choices disabled without an approved key migration.
+
+Read docs/COMPANION_PAIRING_2026-10-14.md and current desktoptracker/resumeevidence.
+Owner permits exact-head-green reviewedPR merge then safe main synchronization;
+do not bypass pending/failedchecks or replaceinstalledapps/data. At1% five-hour
+remaining save/report/pause; prior one-time resumefired and mustnotrecur.
+
+---
+
 ## October 14 latest actual device result — unresolved
 
 Exacthead13694876PR3 failed both API34 runs38531126312/38531121066:

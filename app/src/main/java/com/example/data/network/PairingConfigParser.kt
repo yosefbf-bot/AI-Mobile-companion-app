@@ -52,12 +52,18 @@ object PairingConfigParser {
         val bytes = Base64.decode(config.certificateDer, Base64.NO_WRAP)
         val cert = CertificateFactory.getInstance("X.509").generateCertificate(ByteArrayInputStream(bytes)) as X509Certificate
         require(cert.encoded.contentEquals(bytes)) { "Unexpected certificate data." }
-        val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
-        require(MessageDigest.isEqual(hash.toByteArray(), config.certificateFingerprint.toByteArray())) { "Paired certificate fingerprint does not match." }
+        verifyCertificate(cert, config.hostIp, config.certificateFingerprint, now)
+        return cert
+    }
+
+    /** The same identity policy applies in the bootstrap TLS handshake, before secrets are sent. */
+    internal fun verifyCertificate(cert: X509Certificate, host: String, fingerprint: String, now: Date = Date()) {
+        require(privateAddress(host) && Regex("[a-f0-9]{64}").matches(fingerprint)) { "Invalid private desktop identity." }
+        val hash = MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it.toInt() and 255) }
+        require(MessageDigest.isEqual(hash.toByteArray(), fingerprint.toByteArray())) { "Paired certificate fingerprint does not match." }
         cert.checkValidity(now)
         require(cert.basicConstraints == -1 && cert.extendedKeyUsage?.contains("1.3.6.1.5.5.7.3.1") == true) { "Certificate is not a desktop server certificate." }
-        require(cert.subjectAlternativeNames.orEmpty().any { it[0] == 7 && it[1] == config.hostIp }) { "Paired certificate does not match the desktop address. Pair again after changing networks." }
-        return cert
+        require(cert.subjectAlternativeNames.orEmpty().any { it[0] == 7 && it[1] == host }) { "Paired certificate does not match the desktop address. Pair again after changing networks." }
     }
 
     fun privateAddress(host: String): Boolean {

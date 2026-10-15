@@ -7,9 +7,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.example.data.model.*
-import com.example.data.network.PairingConfigParser
+import com.example.ui.pairing.PairingUiState
 import com.example.ui.theme.Appearance
 import com.example.ui.components.ConnectionStatusBadge
 
@@ -19,10 +21,12 @@ fun NodeSettingsScreen(
     onSaveConfig: (DesktopNodeConfig) -> Unit, onToggleSecureClinicalMode: (Boolean) -> Unit,
     onTestConnection: () -> Unit, onLockVault: () -> Unit, modifier: Modifier = Modifier,
     onRequestNotificationPermission: () -> Unit = {},
-    appearance: Appearance = Appearance.DARK, onAppearanceChange: (Appearance) -> Unit = {}
+    appearance: Appearance = Appearance.DARK, onAppearanceChange: (Appearance) -> Unit = {},
+    pairingState: PairingUiState = PairingUiState(), onPairLink: (String) -> Unit = {},
+    onScanPairingQr: () -> Unit = {}, onCancelPairing: () -> Unit = {}
 ) {
     var pairingText by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+    DisposableEffect(Unit) { onDispose { pairingText = "" } }
     LazyColumn(modifier.fillMaxSize().testTag("node_settings_screen"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             Text("Appearance", style = MaterialTheme.typography.titleMedium)
@@ -43,20 +47,35 @@ fun NodeSettingsScreen(
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Pair this phone", style = MaterialTheme.typography.titleMedium)
-                    Text("On the desktop, open Companion, choose this phone's permissions, and create a pairing link. Paste the complete link here. It includes the selected address, HTTPS certificate and per-device key.")
-                    OutlinedTextField(pairingText, { pairingText = it; error = null }, label = { Text("Private desktop pairing link") },
+                    Text("On the desktop, open Companion, choose this phone's permissions and show a new pairing QR. Keep the PC awake on the same approved private network or a VPN that can reach it.")
+                    Button(onClick = { pairingText = ""; onScanPairingQr() },
+                        enabled = !pairingState.connecting && !currentConfig.simulatedNodeEnabled,
+                        modifier = Modifier.testTag("scan_pairing_qr")) { Text("Scan desktop QR") }
+                    Text("Or copy the secure pairing link from the desktop and paste it below. A QR or link is a secret; do not share it. Existing full-certificate pairing links remain supported.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(pairingText, { pairingText = it }, label = { Text("Private desktop pairing link") },
+                        enabled = !pairingState.connecting && !currentConfig.simulatedNodeEnabled,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().testTag("pairing_link_input"))
-                    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    Button(onClick = {
-                        try { val config = PairingConfigParser.parse(pairingText, currentConfig); onSaveConfig(config); pairingText = ""; error = null }
-                        catch (_: Exception) { error = "The complete pairing link and certificate could not be verified. Create a new link on the desktop." }
-                    }, enabled = pairingText.isNotBlank(), modifier = Modifier.testTag("save_config_button")) { Text("Save secure pairing") }
+                    Button(onClick = { val link = pairingText; pairingText = ""; onPairLink(link) },
+                        enabled = pairingText.isNotBlank() && !pairingState.connecting && !currentConfig.simulatedNodeEnabled,
+                        modifier = Modifier.testTag("save_config_button")) { Text("Connect securely") }
+                    if (currentConfig.simulatedNodeEnabled) Text("Turn off Demo before pairing with a real desktop.")
+                    if (pairingState.connecting) {
+                        Text("Verifying the desktop certificate and this phone's approved access…")
+                        OutlinedButton(onClick = onCancelPairing) { Text("Cancel pairing") }
+                    }
+                    pairingState.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    pairingState.completion?.let {
+                        Text("Pairing verified with ${it.serverName}. Authenticated desktop access was checked.")
+                        Text("Approved permissions: ${it.approvedScopes.sorted().joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                    }
                     if (currentConfig.isPaired) {
                         Text("Desktop: ${currentConfig.hostIp}:${currentConfig.port}")
                         Text("Paired certificate: ${currentConfig.certificateFingerprint.take(12)}…")
                         Text("If the address or certificate changes, pair again. No shared default key or accept-all certificate mode is used.")
                     } else Text("No real desktop has been paired.")
-                    OutlinedButton(onClick = onTestConnection) { Text("Check desktop") }
+                    Text("If the PC cannot be reached, check its Companion connection, address, Windows firewall and approved Wi-Fi/VPN. Show a fresh QR if it expired. Certificate or access errors require desktop review; no trust bypass is offered.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = onTestConnection, enabled = currentConfig.isPaired && !pairingState.connecting) { Text("Check desktop") }
                 }
             }
         }
@@ -109,6 +128,16 @@ fun NodeSettingsScreen(
         item {
             Text("Privacy & Unlock", style = MaterialTheme.typography.titleMedium)
             Text("Screenshots and app previews are blocked for the protected phone workspace.")
+            Text("Require unlock again while actively using the app:")
+            listOf("5 minutes" to "5", "10 minutes" to "10", "20 minutes" to "20", "30 minutes" to "30", "Off while active" to "off").forEach { (label, tag) ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RadioButton(selected = tag == "5", onClick = {}, enabled = tag == "5",
+                        modifier = Modifier.testTag("session_mode_" + tag))
+                    Text(label)
+                }
+            }
+            Text("Five minutes from Android authentication is the current security limit, even while you keep using the app. Longer sessions and Off need a verified protected-storage upgrade and are unavailable. Your existing keys and saved records are unchanged.", style = MaterialTheme.typography.bodySmall)
+            Text("Backgrounding, phone lock, Lock now and Android security expiry can require unlock sooner. Polling and typing do not extend the session.", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Switch(secureClinicalMode, onCheckedChange = onToggleSecureClinicalMode)
                 Column {

@@ -33,6 +33,11 @@ class PrivateAIRepository(
     private val workflows = SharedWorkflowService(nodeService)
     private val meetingOutbox = MeetingOutbox(database, cipher)
     private val meetingDelivery = Mutex()
+    private val pairing = Mutex()
+    private val pairingCommitGuard = Any()
+    private val pairingService = PairingBootstrapService()
+    private val pairingJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
+    private val pairingCancellation = java.util.concurrent.atomic.AtomicLong()
     private val _phoneMeetings = MutableStateFlow<List<PhoneMeeting>>(emptyList())
     val phoneMeetings = _phoneMeetings.asStateFlow()
     private val _desktopMeetings = MutableStateFlow<List<DesktopMeeting>>(emptyList())
@@ -77,11 +82,11 @@ class PrivateAIRepository(
     val notifications = selectedDatabase.flatMapLatest { it.taskDao().getAllNotifications() }
         .combine(vaultReady) { rows, ready -> if (ready) rows.map { VaultRecords.decode(it, cipher) } else emptyList() }
 
-    fun onUnlocked(): Job {
+    fun onUnlocked(): Job = synchronized(pairingCommitGuard) {
         val generation = ++workspaceGeneration
-        opening?.cancel()
-        return scope.launch {
         _vaultReady.value = false
+        opening?.cancel()
+        scope.launch {
         try {
             database.migrateLegacyContent(cipher)
             _nodeConfig.value = configStore?.load() ?: _nodeConfig.value
@@ -89,17 +94,23 @@ class PrivateAIRepository(
             selectWorkspace()
             _lastSyncTimestamp.value = configStore?.lastSync(_nodeConfig.value) ?: 0
             selectedDatabase.value.migrateLegacyContent(cipher)
-            ensureActive()
-            check(generation == workspaceGeneration)
-            _vaultReady.value = true
+            synchronized(pairingCommitGuard) {
+                ensureActive()
+                check(generation == workspaceGeneration)
+                _vaultReady.value = true
+            }
             if (_nodeConfig.value.simulatedNodeEnabled) seedDemo()
             _lastError.value = null
             restartPolling(generation)
             if (_nodeConfig.value.isPaired || _nodeConfig.value.simulatedNodeEnabled) checkConnection()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            if (generation == workspaceGeneration) _vaultReady.value = false
-            _lastError.value = "The protected workspace could not be opened. Unlock again or use the recovery instructions; no data was erased."
+            synchronized(pairingCommitGuard) {
+                if (generation == workspaceGeneration) {
+                    _vaultReady.value = false
+                    _lastError.value = "The protected workspace could not be opened. Unlock again or use the recovery instructions; no data was erased."
+                }
+            }
         }
         }.also { opening = it }
     }
@@ -122,9 +133,12 @@ class PrivateAIRepository(
         }
     }
 
-    fun onLocked() {
+    fun onLocked() = synchronized(pairingCommitGuard) {
+        // Cancellation can dispatch continuations immediately on another thread.
+        // Publish revocation before any transport or job observes cancellation.
         _vaultReady.value = false
         ++workspaceGeneration
+        cancelPairing()
         opening?.cancel(); polling?.cancel(); activeRequests.keys.forEach { it.cancel() }; nodeService.cancelAll()
         _connectionStatus.value = ConnectionStatus.DISCONNECTED
         _nodeStats.value = NodeStats()
@@ -160,7 +174,8 @@ class PrivateAIRepository(
     fun getDocumentById(id: String) = selectedDatabase.flatMapLatest { it.documentDao().getDocumentById(id) }
         .combine(vaultReady) { row, ready -> if (ready && row != null) VaultRecords.decode(row, cipher) else null }
 
-    fun updateConfig(newConfig: DesktopNodeConfig): Job {
+    fun updateConfig(newConfig: DesktopNodeConfig): Job = synchronized(pairingCommitGuard) {
+        cancelPairing()
         requireReady()
         if (!newConfig.simulatedNodeEnabled && newConfig.isPaired) PairingConfigParser.certificate(newConfig)
         else if (!newConfig.simulatedNodeEnabled) require(newConfig.hostIp.isBlank() && newConfig.pairKey.isBlank() && newConfig.certificateDer.isBlank()) { "Use the complete desktop pairing link." }
@@ -175,25 +190,96 @@ class PrivateAIRepository(
         _connectionStatus.value = ConnectionStatus.DISCONNECTED; _nodeStats.value = NodeStats()
         _vaultReady.value = false
         selectWorkspace()
-        return scope.launch {
+        return@synchronized scope.launch {
             try {
                 selectedDatabase.value.migrateLegacyContent(cipher)
-                ensureActive()
-                check(generation == workspaceGeneration)
-                _vaultReady.value = true
+                synchronized(pairingCommitGuard) {
+                    ensureActive()
+                    check(generation == workspaceGeneration)
+                    _vaultReady.value = true
+                }
                 _lastSyncTimestamp.value = configStore?.lastSync(newConfig) ?: 0
                 if (newConfig.simulatedNodeEnabled) seedDemo()
                 restartPolling(generation)
                 checkConnection()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
-                if (generation == workspaceGeneration) { _vaultReady.value = false; _lastError.value = "The selected protected workspace could not be opened. No data was erased." }
+                synchronized(pairingCommitGuard) {
+                    if (generation == workspaceGeneration) { _vaultReady.value = false; _lastError.value = "The selected protected workspace could not be opened. No data was erased." }
+                }
             }
         }.also { opening = it }
     }
 
     fun toggleSimulatedDesktopNode(enabled: Boolean) = updateConfig(_nodeConfig.value.copy(simulatedNodeEnabled = enabled))
     fun pair(link: String) = updateConfig(PairingConfigParser.parse(link, _nodeConfig.value))
+
+    fun cancelPairing() {
+        pairingCancellation.incrementAndGet()
+        pairingService.cancelAll()
+        pairingJobs.forEach { it.cancel() }
+    }
+
+    /** Verify before replacing a pairing; no request queue or token persistence is involved. */
+    suspend fun pairSecure(link: String): PairingCompletion = withContext(dispatcher) {
+        val job = currentCoroutineContext()[Job]
+        val cancelEpoch = pairingCancellation.get()
+        if (job != null) pairingJobs.add(job)
+        try { withTrackedRequest {
+            pairing.withLock {
+                try {
+                    requireReady()
+                    val previous = _nodeConfig.value
+                    if (previous.simulatedNodeEnabled) throw GatewayException("DEMO", message = "Turn off Demo mode before connecting to a real PC.")
+                    val generation = workspaceGeneration
+                    val authEpoch = if (cipher === EncryptionManager) EncryptionManager.accessGeneration else null
+                    val lease = nodeService.authorizationLease(previous)
+                    val check = {
+                        if (job?.isActive == false || pairingCancellation.get() != cancelEpoch) throw CancellationException("Pairing was cancelled.")
+                        requireCurrent(previous, generation)
+                        if (cipher === EncryptionManager && (!EncryptionManager.hasCurrentAccess() || EncryptionManager.accessGeneration != authEpoch))
+                            throw GatewayException("PHONE_LOCKED", 423, "Unlock the protected phone workspace before pairing.")
+                        nodeService.requireAuthorization(previous, lease)
+                    }
+                    check()
+                    val bootstrap = PairingBootstrapParser.isBootstrap(link)
+                    val exchanged = if (bootstrap) pairingService.exchange(PairingBootstrapParser.parse(link), previous, check) else null
+                    val next = exchanged?.config ?: PairingConfigParser.parse(link, previous)
+                    check()
+                    val stats = pairingService.verifyStatus(next, check)
+                    if (exchanged != null && stats.scopes != exchanged.scopes) throw GatewayException("PAIR_PROTOCOL", message = "The desktop's verified permissions changed during pairing. Generate a new code.")
+                    currentCoroutineContext().ensureActive()
+                    synchronized(pairingCommitGuard) {
+                        check()
+                        val storage = configStore ?: throw GatewayException("PAIR_STORAGE", message = "Encrypted pairing storage is unavailable. The previous pairing is unchanged.")
+                        // Encryption and the AtomicFile write may take time. Both guarded
+                        // checkpoints must remain in the original authorization epoch.
+                        storage.save(next, beforeCommit = check)
+                        val selectedGeneration = ++workspaceGeneration
+                        opening?.cancel(); polling?.cancel(); nodeService.cancelAll()
+                        activeRequests.keys.filter { it !== job }.forEach { it.cancel() }
+                        _nodeConfig.value = next
+                        _secureClinicalMode.value = next.secureClinicalMode
+                        _workflowState.value = WorkflowSnapshot()
+                        _phoneMeetings.value = emptyList(); _desktopMeetings.value = emptyList(); _meetingPending.value = 0
+                        _lastSyncTimestamp.value = 0
+                        _nodeStats.value = stats
+                        _lastConnectionCheck.value = System.currentTimeMillis()
+                        _modelProcessingMode.value = stats.processingMode
+                        _connectionStatus.value = ConnectionStatus.CONNECTED
+                        _lastError.value = null
+                        restartPolling(selectedGeneration)
+                    }
+                    PairingCompletion(stats.serverName, stats.scopes, exchanged?.sharedChats ?: emptyList(),
+                        next.certificateFingerprint, exchanged?.notificationsWhileLocked ?: false, bootstrap)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (e is GatewayException) throw e
+                    throw GatewayException("PAIR_FAILED", message = "Pairing could not be verified or saved. The previous pairing is unchanged. Generate a new code on the PC before trying again.")
+                }
+            }
+        } } finally { if (job != null) pairingJobs.remove(job) }
+    }
 
     suspend fun checkConnection(): Boolean {
         requireReady()

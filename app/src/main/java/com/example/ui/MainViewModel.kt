@@ -17,6 +17,9 @@ import com.example.data.repository.PrivateAIRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import com.example.ui.pairing.PairingUiState
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -25,7 +28,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         EncryptionManager.initialize(application)
         lateinit var configured: PrivateAIRepository
         val transport = DesktopNodeService { config ->
-            if (!EncryptionManager.isUnlocked.value) null else configured.authorizationGeneration(config)?.let {
+            if (!EncryptionManager.hasCurrentAccess()) null else configured.authorizationGeneration(config)?.let {
                 GatewayAuthorizationEpoch(EncryptionManager.accessGeneration, it)
             }
         }
@@ -51,6 +54,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val lastSavedCaptureId = _lastSavedCaptureId.asStateFlow()
     private val protectedDrafts = mutableMapOf<String, String>()
     var stopMeetingRecording: (() -> Unit)? = null
+    var stopPairingScanner: (() -> Unit)? = null
+    private var pairingJob: Job? = null
+    private var pairingGeneration = 0L
+    private val _pairingState = MutableStateFlow(PairingUiState())
+    val pairingState = _pairingState.asStateFlow()
     private var activeOperations = 0
     val chatSessions = repository.chatSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val documents = repository.documents.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -78,7 +86,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val opening = repository.onUnlocked()
                     try { opening.join(); if (vaultReady.value) configureNotifications(nodeConfig.value) }
                     finally { if (!isUnlocked.value) opening.cancel() }
-                } else { stopMeetingRecording?.invoke(); repository.onLocked(); _pendingEvidence.value = null; _lastSavedCaptureId.value = null; _selectedDocument.value = null }
+                } else {
+                    stopPairingScanner?.invoke(); cancelPairing()
+                    stopMeetingRecording?.invoke(); repository.onLocked(); _pendingEvidence.value = null; _lastSavedCaptureId.value = null; _selectedDocument.value = null
+                }
             }
         }
     }
@@ -147,6 +158,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.updateConfig(config)
         configureNotifications(config)
     }
+
+    fun beginPairing(link: String) {
+        cancelPairing()
+        if (!vaultReady.value || !EncryptionManager.hasCurrentAccess()) {
+            _pairingState.value = PairingUiState(error = "Unlock the protected phone workspace before pairing.")
+            return
+        }
+        val attempt = pairingGeneration
+        val authorization = EncryptionManager.accessGeneration
+        _pairingState.value = PairingUiState(connecting = true)
+        pairingJob = viewModelScope.launch {
+            try {
+                val completion = repository.pairSecure(link)
+                if (attempt == pairingGeneration && EncryptionManager.hasCurrentAccess() &&
+                    authorization == EncryptionManager.accessGeneration) {
+                    _activeSessionId.value = null; _selectedDocument.value = null
+                    configureNotifications(nodeConfig.value)
+                    _pairingState.value = PairingUiState(completion = completion)
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (attempt == pairingGeneration) _pairingState.value = PairingUiState(error =
+                    if (e is GatewayException) e.message else "Pairing could not be verified. Show a fresh QR or secure link on the desktop, check the private network and try again.")
+            } finally {
+                if (attempt == pairingGeneration) {
+                    pairingJob = null
+                    if (_pairingState.value.connecting) _pairingState.value = PairingUiState()
+                }
+            }
+        }
+    }
+
+    fun cancelPairing() {
+        pairingGeneration++
+        pairingJob?.cancel(); pairingJob = null
+        repository.cancelPairing()
+        _pairingState.value = PairingUiState()
+    }
     fun toggleSimulatedDesktop(enabled: Boolean) = operation("Workspace changed. Demo uses a separate database and never contacts the desktop.") {
         _activeSessionId.value = null; _selectedDocument.value = null; repository.toggleSimulatedDesktopNode(enabled)
         configureNotifications(repository.nodeConfig.value)
@@ -165,7 +214,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun markAllNotificationsRead() = operation { repository.markAllNotificationsRead() }
     fun stopStreaming() { repository.stopStreaming(); _isStreamingResponse.value = false; _userFeedback.value = "Request stopped. Review pending delivery before submitting another request." }
     fun unlockWithPin(pin: String) = biometricAuthManager.unlockWithPin(pin)
-    fun lockVault() { stopMeetingRecording?.invoke(); repository.onLocked(); biometricAuthManager.lock(); _activeSessionId.value = null; _selectedDocument.value = null }
+    fun lockVault() { stopPairingScanner?.invoke(); cancelPairing(); stopMeetingRecording?.invoke(); repository.onLocked(); biometricAuthManager.lock(); _activeSessionId.value = null; _selectedDocument.value = null }
     fun refreshWorkflows() = triggerSync()
     fun createCapture(text: String, kind: String, location: String, owner: String, dueAt: Long?, channel: String?, attachment: ChatAttachment?) =
         operation("Note saved or queued. Review the desktop's proposed actions; no email or WhatsApp draft has been sent.") {
