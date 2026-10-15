@@ -13,8 +13,10 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -86,19 +88,19 @@ class PairingCameraPermissionAcceptanceTest {
         assertNull("Denied scanning must own no camera resources.", model.stopPairingScanner)
         assertFalse(model.nodeConfig.value.isPaired)
         assertFalse(model.pairingState.value.connecting)
-        // This fixed settings fixture's privacy item is index 6. Bring the
-        // bounded item into composition, then scroll each exact child once;
-        // generic recursive search/scroll exhausted the CI semantics heap in
-        // the Dashboard acceptance case on this small disposable display.
+        // This fixed settings fixture's privacy item is index 6. Compose 1.7.2
+        // performScrollTo and performScrollToNode both have unbounded retry
+        // loops. Use a finite number of actual scroll actions below, requiring
+        // visibility and progress rather than retrying until the heap is full.
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
         listOf("10", "20", "30", "off").forEach { tag ->
-            rule.onNodeWithTag("session_mode_" + tag).performScrollTo()
+            showSettingsControl("session_mode_" + tag, direction = 1f)
             rule.onNodeWithTag("session_mode_" + tag).assertIsNotEnabled()
         }
-        rule.onNodeWithTag("session_mode_5").performScrollTo()
+        showSettingsControl("session_mode_5", direction = -1f)
         rule.onNodeWithTag("session_mode_5").assertIsSelected()
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(2)
-        rule.onNodeWithTag("scan_pairing_qr").performScrollTo()
+        showSettingsControl("scan_pairing_qr", direction = 1f)
         rule.onNodeWithTag("scan_pairing_qr").performClick()
         device.pressHome()
         rule.waitUntil(10_000) { rule.activityRule.scenario.state == Lifecycle.State.CREATED }
@@ -106,5 +108,25 @@ class PairingCameraPermissionAcceptanceTest {
         assertEquals(0L, EncryptionManager.remainingSessionMillis())
         assertNull(model.stopPairingScanner)
         assertFalse(model.pairingState.value.connecting)
+    }
+
+    private fun showSettingsControl(tag: String, direction: Float) {
+        val control = rule.onNodeWithTag(tag)
+        val settings = rule.onNodeWithTag("node_settings_screen")
+        repeat(6) { step ->
+            try { control.assertIsDisplayed(); return }
+            catch (notVisible: AssertionError) { if (step == 5) throw notVisible }
+            val viewport = settings.fetchSemanticsNode()
+            assertTrue("The real settings viewport must have positive height.", viewport.boundsInRoot.height > 0f)
+            val before = viewport.config[SemanticsProperties.VerticalScrollAxisRange].value()
+            settings.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                assertTrue("The actual settings scroll action must be accepted.",
+                    scroll(0f, direction * viewport.boundsInRoot.height * 0.6f))
+            }
+            rule.waitForIdle()
+            val after = settings.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+            assertTrue("No scrolling progress while bringing $tag into view at bounded step $step.", before != after)
+        }
+        control.assertIsDisplayed()
     }
 }

@@ -15,7 +15,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -192,7 +191,6 @@ class OsCredentialKeystoreAcceptanceTest {
         // warning still has to be brought into view and asserted below.
         rule.onNodeWithTag("dashboard_screen").performScrollToIndex(2)
         rule.waitUntil(10_000) { rule.onAllNodesWithText(coverageWarning).fetchSemanticsNodes().isNotEmpty() }
-        rule.onNodeWithText(coverageWarning).performScrollTo()
         rule.onNodeWithText(coverageWarning).assertIsDisplayed()
         rule.onNodeWithText("All clear").assertDoesNotExist()
         rule.onNodeWithText("Running on PC").assertDoesNotExist()

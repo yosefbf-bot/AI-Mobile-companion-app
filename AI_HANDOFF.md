@@ -1,3 +1,19 @@
+## October 14 finite-scroll device-test correction
+
+Both e67b323 device runs passed real app expiry and both raw original-key
+rejection assertions (software OS/framework proof, not physical TEE acceptance).
+Only3 of6 cases attempted:2 passed, OS-credential UI case exhausted its192MB
+heap in Compose1.7.2's looping performScrollTo after known-index scroll succeeded.
+The new two-file test correction removes that redundant loop and caps remaining
+camera/settings scroll actions, retaining every visible/auth/permission assertion.
+No production heap, crypto, key, database or session-policy change. Fresh14 focused
+units, testAPK build and lint passed;0errors43warnings. Production APK remains
+c59247c71d8faf990af853b0ba6416696b7e1a9ffe5194db68518595c6f93bbb;
+latesttestAPK4e71bda1c6270174d57f96337eaae6692e1544de2c784e72db02c652ae1ac0e7,
+signer unchanged. All6 current-head hosted cases must pass before PR4 merges.
+Original bf4/e67 archives, XML and first stacks remain preserved; never repeat
+unproved hardware or completed-release claims. Owner app/data/pairings untouched.
+
 ## October 14 corrected device acceptance tests
 
 Read [the current acceptance checkpoint](docs/COMPANION_ACCEPTANCE_2026-10-14.md).
