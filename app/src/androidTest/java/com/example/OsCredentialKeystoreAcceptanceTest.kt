@@ -9,6 +9,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -115,7 +116,7 @@ class OsCredentialKeystoreAcceptanceTest {
                     runBlocking { dao.insertSession(retained!!) }
                 }
                 phase = "shared chat round ${round + 1}: retained list and navigation"
-                rule.waitUntil(20_000) { rule.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty() }
+                rule.waitUntil(20_000) { rule.onNodeWithText(title).isDisplayed() }
                 rule.onNodeWithText(title).assertIsDisplayed()
                 rule.waitForIdle()
                 assertTrue("Rendering a shared chat with no preview must not relock the vault.", EncryptionManager.hasCurrentAccess())
@@ -123,20 +124,28 @@ class OsCredentialKeystoreAcceptanceTest {
                     runBlocking { dao.allSessionsForMigration().single { it.id == sessionId } })
                 val generation = EncryptionManager.accessGeneration
                 rule.onNodeWithTag("chat_session_item_$sessionId").performClick()
+                // The click updates lifecycle-collected StateFlow; wait for the
+                // real destination to be placed before retaining its assertion.
+                rule.waitUntil(20_000) { rule.onNodeWithTag("chat_detail_screen").isDisplayed() }
                 rule.onNodeWithTag("chat_detail_screen").assertIsDisplayed()
                 rule.onNodeWithTag("chat_detail_back_button").performClick()
+                rule.waitUntil(20_000) {
+                    rule.onNodeWithTag("chat_list_screen").isDisplayed() && rule.onNodeWithText(title).isDisplayed()
+                }
                 rule.onNodeWithText(title).assertIsDisplayed()
                 assertEquals("Ordinary list navigation must not replace the authenticated session.", generation,
                     EncryptionManager.accessGeneration)
                 if (round < 2) {
                     rule.activityRule.scenario.onActivity { model.lockVault() }
                     rule.waitUntil(10_000) { !EncryptionManager.isUnlocked.value }
+                    rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
                     rule.onNodeWithTag("biometric_lock_card").assertIsDisplayed()
                 }
             }
             phase = "shared chat: malformed nonempty preview retains fail-closed lock"
             runBlocking { dao.insertSession(retained!!.copy(lastMessagePreviewEncrypted = "invalid-nonempty-preview")) }
             rule.waitUntil(10_000) { !EncryptionManager.isUnlocked.value }
+            rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
             rule.onNodeWithTag("biometric_lock_card").assertIsDisplayed()
             assertThrows(VaultUnavailableException::class.java) { EncryptionManager.encrypt("Synthetic locked probe") }
         } catch (failure: Throwable) {
