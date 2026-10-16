@@ -43,12 +43,21 @@ the original ciphertext and authorization generation, and finally verifies that 
 malformed nonempty preview still locks the vault. It does not use a live desktop
 pairing or claim physical-phone acceptance. Cleanup removes only its synthetic ID.
 
-At implementation checkpoint, independent source review passed and `git diff
---check` passed. New Gradle/unit/lint/device results are not yet claimed: the
-owner PC had under 1 GiB of available RAM before a build began. Current exact-head
-hosted checks and a same-signer APK build remain required before distribution.
-The previous 95 local / six hosted device results apply to the prior version,
-not automatically to this patch.
+Independent source review and `git diff --check` passed. Initial local builds
+were deferred while available RAM was below 1 GiB. After it recovered, the first
+new malformed-preview fixture failure was reproduced and its logs/XML preserved.
+That test queried callback effects before its mutated lazy row was measured;
+bounded waits alone did not correct it. The fixture now uses three static rows,
+each brought visibly into view with one bounded index action. All three exact
+payload rejection assertions and final set equality remain required.
+
+The corrected three focused Compose/strict-codec cases passed locally with zero
+failures, errors or skips. Full current-head build/unit/lint and all seven actual
+OS device cases remain required; no such pass is inferred from focused tests.
+The initial hosted PR also failed downloading an Android SDK image before app
+compilation. The previous 95 local / six hosted device results remain historical.
+The two Core HTTPS interoperability cases have not been rerun for this UI patch.
+A same-signer accepted APK and owner-phone verification remain separate gates.
 
 ## Updating the existing phone
 

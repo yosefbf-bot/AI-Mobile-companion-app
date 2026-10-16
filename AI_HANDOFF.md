@@ -10,10 +10,14 @@ inputs retain the original decoder and fail-closed lock. Version1.2.1-dev/code4;
 appID, original key, cipher, OS-authentication/session policy and data unchanged.
 Three actual Compose/strict-codec unit regressions and a seventh real OS-PIN/
 Keystore retained-shared-cache case are added. Independent source review and
-diff-check passed; current-head Gradle/lint/actualdevice gates remain required.
-Local build has not started because available RAM was below1GiB. Do not transfer
-prior95/sixcase results to this head or distribute an unaccepted APK. Preserve
-the existing phone installation/pairing and original signer for an additive update.
+diff-check passed. After freeRAM recovered, the new unit fixture failure was
+reproduced/preserved and corrected using three visibly measured static rows,
+with all strict rejection assertions retained. Focused3/3 passed locally, zero
+failures/errors/skips. Full current-head build/unit/lint/sevenactualdevice gates
+remain required; twoCoreHTTPS cases have not been rerun. Initial hosted SDK
+download and unmeasured-unit failures are historical first evidence, not passes.
+Do not transfer prior95/sixcase results to this head or distribute an unaccepted
+APK. Preserve the phone installation/pairing and original signer for an update.
 
 ## October 15 current repository-lock regression checkpoint
 

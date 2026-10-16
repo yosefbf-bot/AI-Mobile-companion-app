@@ -1,10 +1,11 @@
 package com.example
 
 import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.performScrollToIndex
 import com.example.data.local.entity.EncryptedChatSession
 import com.example.ui.screens.chats.ChatListScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -71,19 +72,23 @@ class ChatPreviewCompositionTest {
         val cipher = TestVaultCipher()
         val malformed = listOf(" ", "not-ciphertext", "PAI2:invalid")
         val rejected = mutableSetOf<String>()
-        val row = mutableStateOf(EncryptedChatSession("invalid", "Synthetic malformed preview",
-            lastMessagePreviewEncrypted = malformed.first()))
-        rule.setContent {
-            MyApplicationTheme {
-                ChatListScreen(listOf(row.value), decryptText = { payload ->
-                    try { cipher.decrypt(payload); fail("Malformed nonempty data was accepted."); "" }
-                    catch (_: IllegalArgumentException) { rejected.add(payload); "" }
-                }, onSessionClick = {}, onCreateNewSession = {}, onDeleteSession = {})
-            }
+        render(malformed.mapIndexed { index, payload ->
+            EncryptedChatSession("invalid-$index", "Synthetic malformed preview $index",
+                lastMessagePreviewEncrypted = payload)
+        }) { payload ->
+            try { cipher.decrypt(payload); fail("Malformed nonempty data was accepted."); "" }
+            catch (_: IllegalArgumentException) { rejected.add(payload); "" }
         }
-        malformed.forEach { payload ->
-            rule.runOnIdle { row.value = row.value.copy(lastMessagePreviewEncrypted = payload) }
+        malformed.forEachIndexed { index, payload ->
+            // Each static malformed row must actually be composed and visible.
+            // A single known-index action is bounded; no recursive ScrollTo.
+            rule.onNode(hasScrollToIndexAction()).performScrollToIndex(index)
+            rule.mainClock.advanceTimeByFrame()
             rule.waitForIdle()
+            rule.onNodeWithText("Synthetic malformed preview $index").assertIsDisplayed()
+            rule.waitUntil("Strict decoder rejection for synthetic case $index; observed=${rejected.size}", 5_000) {
+                rejected.contains(payload)
+            }
             assertTrue(rejected.contains(payload))
         }
         assertEquals("Only exact absence may bypass decoding.", malformed.toSet(), rejected)
