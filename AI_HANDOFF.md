@@ -1,3 +1,37 @@
+# Accepted private preview checkpoint - October 18, 2026
+
+This checkpoint supersedes historical pending/budget/failure notes below for this
+release. Preserve historical evidence; do not rerun completed tests without reason.
+
+- APK/source: 163398051f72b943fb74242462e5ee5a83ac8be1,
+  1.2.2-dev/versionCode 5. Accepted merge main:
+  2ca8ffc887a3ade5928b793a5ccca6d1277a5c74.
+- Both exact-source review/push workflows passed (39082870008/39082867773),
+  as did merged-main 39106474740. Both original source artifact archives record
+  8/8 actual API 34 emulator cases with zero skips, including OS authentication,
+  actual IME visibility, composer/history geometry, bounded multiline draft and
+  encrypted-history retention. Hosted units: 96 pass, two named unavailable
+  external desktop-fixture skips. Lint: 0 errors, 76 warnings. Skips are not passes.
+- Distributed APK SHA256:
+  da5b96f5b9c12823301fb06535b1f743aca59acf8becac531ee023aa05f2fae9
+  All 588 non-signature payload entries match the accepted CI APK. Public retained
+  signer SHA256: 4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd.
+- Immutable private preview, exact source and VALIDATION.json/checksums:
+  https://github.com/yosefbf-bot/AI-Mobile-companion-app/releases/tag/private-preview-1.2.2-2026.10.18
+- Physical owner-phone update/OEM keyboard/Keystore, live LAN/camera/microphone/
+  notifications and live approved account workflows are NOT established by hosted
+  tests. Owner confirmation of the earlier unlock fix is not keyboard acceptance.
+  Do not uninstall/clear records or rotate signing identity to bypass an update
+  failure. No owner installation, records, pairing or key was replaced here.
+
+This is a documentation-only acceptance correction. No app/protocol/database,
+permissions, authentication or encryption behavior changes. Its own GitHub checks
+remain required. Original source archives retain the exact tested source commit;
+these notes do not relabel binaries or rewrite historical validation receipts.
+
+---
+Historical handoff follows.
+
 ## October 17 chat keyboard visibility correction (pending validation)
 
 Owner confirms the retained-chat unlock fix now works on the phone. Based on

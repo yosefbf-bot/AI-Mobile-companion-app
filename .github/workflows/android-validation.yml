@@ -1,16 +1,33 @@
 name: Android validation
 on:
   pull_request:
+    branches: [main]
   push:
-    branches: [main, "chatgpt/**"]
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: android-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  scope:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Verify conservative scope and gate boundaries
+        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py' -v
+      - name: Classify complete change range
+        id: classify
+        run: python3 .github/scripts/ci_scope.py
   build-test-device:
+    needs: scope
+    if: ${{ needs.scope.outputs.mode != 'docs' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -34,6 +51,18 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: Cache dependency downloads with Gradle's free basic provider
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-home-cache-includes: |
+            caches/modules-2
+            wrapper/dists
+          gradle-home-cache-excludes: |
+            caches/build-cache-*
+          build-scan-publish: false
+          dependency-graph: disabled
       - name: Set up Android command-line tools
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
@@ -130,5 +159,17 @@ jobs:
             app/build/reports/
             app/build/test-results/
             app/build/outputs/androidTest-results/
-          retention-days: 14
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && 14 || github.event_name == 'pull_request' && 3 || 7 }}
           if-no-files-found: warn
+
+  ci-gate:
+    if: ${{ always() }}
+    needs: [scope, build-test-device]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Require the complete selected validation path
+        env:
+          CI_GATE_NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/ci_scope.py --gate

@@ -1,0 +1,13 @@
+{
+  "administrative_docs": [
+    "AI_HANDOFF.md",
+    "AGENTS.md",
+    "README.md",
+    "GEMINI.md",
+    "docs/CI_COST_CONTROLS.md"
+  ],
+  "full_jobs": [
+    "build-test-device"
+  ],
+  "always_jobs": []
+}
