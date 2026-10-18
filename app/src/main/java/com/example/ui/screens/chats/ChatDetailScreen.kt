@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -174,7 +176,9 @@ fun ChatDetailScreen(
     }
 
     Scaffold(
-        modifier = modifier.fillMaxSize().testTag("chat_detail_screen"),
+        // Resize the whole conversation above the IME, so the fixed composer
+        // and scrollable history share the remaining window instead of overlapping it.
+        modifier = modifier.fillMaxSize().imePadding().testTag("chat_detail_screen"),
         topBar = {
             TopAppBar(
                 title = {
@@ -255,6 +259,7 @@ fun ChatDetailScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
+                    .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
                 // Offline notice if disconnected

@@ -1,3 +1,19 @@
+## October 17 chat keyboard visibility correction (pending validation)
+
+Owner confirms the retained-chat unlock fix now works on the phone. Based on
+verified main6f450f589ac04509c8ef887f97f907d9e210e99d, the focused keyboard
+branch applies Compose IME insets to the chat Scaffold and navigation-bar insets
+to the composer. The existing scrollable history and four-line input limit remain;
+the input and send button should move above the keyboard without a full-screen
+editor. Existing adjustResize is retained. No extra package, network, permission,
+protocol, authentication, encryption, pairing or data migration is introduced.
+Version1.2.2-dev/code5 distinguishes the installable update from1.2.1.
+An eighth actual-device case requires real OS unlock and a visible real keyboard,
+checks input/send/history geometry, long-draft bounds, unchanged encrypted history
+and retained draft after dismissing the keyboard. Compile, unit/lint and fresh
+exact-head device results are PENDING, not implied by the added test. Keep the
+existing owner installation and signer; do not uninstall or clear application data.
+
 ## October 15 retained-chat authentication correction
 
 Read [the 1.2.1-dev correction](docs/COMPANION_UNLOCK_PREVIEW_FIX_2026-10-15.md).
