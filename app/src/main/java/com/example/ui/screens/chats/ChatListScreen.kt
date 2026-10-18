@@ -157,7 +157,11 @@ fun ChatListScreen(
                     items(filteredSessions, key = { it.id }) { session ->
                         ChatSessionItem(
                             session = session,
-                            decryptedPreview = decryptText(session.lastMessagePreviewEncrypted),
+                            // Shared/new chats can legitimately have no preview yet.
+                            // Empty is absence, not ciphertext; nonempty input still
+                            // takes the normal authenticated, fail-closed decoder.
+                            decryptedPreview = if (session.lastMessagePreviewEncrypted.isEmpty()) ""
+                                else decryptText(session.lastMessagePreviewEncrypted),
                             onClick = { onSessionClick(session.id) },
                             onDelete = { onDeleteSession(session.id) }
                         )

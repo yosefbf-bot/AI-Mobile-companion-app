@@ -9,6 +9,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -23,12 +24,16 @@ import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import com.example.data.crypto.EncryptionManager
 import com.example.data.crypto.VaultUnavailableException
+import com.example.data.crypto.VaultRecords
+import com.example.data.local.AppDatabase
+import com.example.data.local.entity.EncryptedChatSession
 import com.example.ui.MainViewModel
 import com.example.ui.UnlockPromptState
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -74,6 +79,82 @@ class OsCredentialKeystoreAcceptanceTest {
             // The disposable device contains synthetic acceptance data only.
             Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
             throw failure
+        }
+    }
+
+    @Test fun actualOsCredentialRetainsDesktopSharedChatCacheAcrossUnlocks() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
+        assumeTrue("A disposable emulator OS credential must be explicitly supplied.", !pin.isNullOrBlank())
+        val device = UiDevice.getInstance(instrumentation)
+        val dao = AppDatabase.getInstance(instrumentation.targetContext).chatDao()
+        val sessionId = "synthetic-shared-preview-regression"
+        val title = "Synthetic retained desktop chat"
+        lateinit var model: MainViewModel
+        var retained: EncryptedChatSession? = null
+        try {
+            cancelAutomaticPromptAndCheckRetry()
+            repeat(3) { round ->
+                phase = "shared chat round ${round + 1}: actual OS authentication"
+                if (round == 0) rule.onNodeWithTag("unlock_biometric_button").performClick()
+                else returnFromHome()
+                val entry = credentialField(device)
+                assertNotNull("The existing shared cache still requires real OS authentication.", entry)
+                entry!!.text = pin!!
+                device.pressEnter()
+                rule.waitUntil(20_000) { EncryptionManager.hasCurrentAccess() }
+                rule.activityRule.scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
+                rule.waitUntil(20_000) { model.vaultReady.value }
+                if (round == 0) {
+                    // Exact retained row shape created by desktop sync: encrypted
+                    // metadata plus a legitimate absent-preview sentinel. No real
+                    // pairing, network, account or user records are used here.
+                    retained = VaultRecords.encode(EncryptedChatSession(sessionId, title,
+                        isSynced = true, desktopChatId = "synthetic-desktop-chat", desktopRevision = 1), EncryptionManager)
+                    assertEquals("", retained!!.lastMessagePreviewEncrypted)
+                    assertNotEquals(title, retained!!.title)
+                    runBlocking { dao.insertSession(retained!!) }
+                }
+                phase = "shared chat round ${round + 1}: retained list and navigation"
+                rule.waitUntil(20_000) { rule.onNodeWithText(title).isDisplayed() }
+                rule.onNodeWithText(title).assertIsDisplayed()
+                rule.waitForIdle()
+                assertTrue("Rendering a shared chat with no preview must not relock the vault.", EncryptionManager.hasCurrentAccess())
+                assertEquals("Retained ciphertext and absent preview must remain unchanged.", retained,
+                    runBlocking { dao.allSessionsForMigration().single { it.id == sessionId } })
+                val generation = EncryptionManager.accessGeneration
+                rule.onNodeWithTag("chat_session_item_$sessionId").performClick()
+                // The click updates lifecycle-collected StateFlow; wait for the
+                // real destination to be placed before retaining its assertion.
+                rule.waitUntil(20_000) { rule.onNodeWithTag("chat_detail_screen").isDisplayed() }
+                rule.onNodeWithTag("chat_detail_screen").assertIsDisplayed()
+                rule.onNodeWithTag("chat_detail_back_button").performClick()
+                rule.waitUntil(20_000) {
+                    rule.onNodeWithTag("chat_list_screen").isDisplayed() && rule.onNodeWithText(title).isDisplayed()
+                }
+                rule.onNodeWithText(title).assertIsDisplayed()
+                assertEquals("Ordinary list navigation must not replace the authenticated session.", generation,
+                    EncryptionManager.accessGeneration)
+                if (round < 2) {
+                    rule.activityRule.scenario.onActivity { model.lockVault() }
+                    rule.waitUntil(10_000) { !EncryptionManager.isUnlocked.value }
+                    rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
+                    rule.onNodeWithTag("biometric_lock_card").assertIsDisplayed()
+                }
+            }
+            phase = "shared chat: malformed nonempty preview retains fail-closed lock"
+            runBlocking { dao.insertSession(retained!!.copy(lastMessagePreviewEncrypted = "invalid-nonempty-preview")) }
+            rule.waitUntil(10_000) { !EncryptionManager.isUnlocked.value }
+            rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
+            rule.onNodeWithTag("biometric_lock_card").assertIsDisplayed()
+            assertThrows(VaultUnavailableException::class.java) { EncryptionManager.encrypt("Synthetic locked probe") }
+        } catch (failure: Throwable) {
+            Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
+            throw failure
+        } finally {
+            // Remove only this test's synthetic cache, never the whole vault.
+            runBlocking { dao.deleteMessagesForSession(sessionId); dao.deleteSession(sessionId) }
+            EncryptionManager.lock()
         }
     }
 

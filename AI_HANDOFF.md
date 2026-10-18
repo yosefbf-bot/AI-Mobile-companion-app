@@ -1,3 +1,24 @@
+## October 15 retained-chat authentication correction
+
+Read [the 1.2.1-dev correction](docs/COMPANION_UNLOCK_PREVIEW_FIX_2026-10-15.md).
+Verified authoritative main `ffa762a1495051449bd995d165dd8f7f7f50ac6f` is the base
+for `chatgpt/companion-auth-loop-2026-10-15`. The Chat list previously decrypted
+the legitimate empty optional preview of new/shared chats, causing the strict
+vault decoder to revoke access immediately after successful face/PIN unlock.
+The UI skips only exact empty absence; all nonempty authenticated/malformed
+inputs retain the original decoder and fail-closed lock. Version1.2.1-dev/code4;
+appID, original key, cipher, OS-authentication/session policy and data unchanged.
+Three actual Compose/strict-codec unit regressions and a seventh real OS-PIN/
+Keystore retained-shared-cache case are added. Independent source review and
+diff-check passed. After freeRAM recovered, the new unit fixture failure was
+reproduced/preserved and corrected using three visibly measured static rows,
+with all strict rejection assertions retained. Focused3/3 passed locally, zero
+failures/errors/skips. Full current-head build/unit/lint/sevenactualdevice gates
+remain required; twoCoreHTTPS cases have not been rerun. Initial hosted SDK
+download and unmeasured-unit failures are historical first evidence, not passes.
+Do not transfer prior95/sixcase results to this head or distribute an unaccepted
+APK. Preserve the phone installation/pairing and original signer for an update.
+
 ## October 15 current repository-lock regression checkpoint
 
 Read [current acceptance](docs/COMPANION_ACCEPTANCE_2026-10-14.md).
