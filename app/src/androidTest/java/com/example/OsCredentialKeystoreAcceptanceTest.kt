@@ -16,6 +16,10 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.assertTextContains
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -27,6 +31,7 @@ import com.example.data.crypto.VaultUnavailableException
 import com.example.data.crypto.VaultRecords
 import com.example.data.local.AppDatabase
 import com.example.data.local.entity.EncryptedChatSession
+import com.example.data.local.entity.EncryptedChatMessage
 import com.example.ui.MainViewModel
 import com.example.ui.UnlockPromptState
 import org.junit.Assert.*
@@ -156,6 +161,80 @@ class OsCredentialKeystoreAcceptanceTest {
             runBlocking { dao.deleteMessagesForSession(sessionId); dao.deleteSession(sessionId) }
             EncryptionManager.lock()
         }
+    }
+
+    @Test fun realKeyboardKeepsComposerAndHistoryVisibleWithoutLosingDraft() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
+        assumeTrue("A disposable emulator OS credential must be explicitly supplied.", !pin.isNullOrBlank())
+        val device = UiDevice.getInstance(instrumentation)
+        val dao = AppDatabase.getInstance(instrumentation.targetContext).chatDao()
+        val sessionId = "synthetic-keyboard-layout"
+        val messageId = "$sessionId-history"
+        lateinit var model: MainViewModel
+        try {
+            phase = "keyboard: actual OS authentication"
+            val entry = credentialField(device)
+            assertNotNull("The keyboard layout test still requires the real OS unlock.", entry)
+            entry!!.text = pin!!
+            device.pressEnter()
+            rule.waitUntil(20_000) { EncryptionManager.hasCurrentAccess() }
+            rule.activityRule.scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
+            rule.waitUntil(20_000) { model.vaultReady.value }
+            val retained = VaultRecords.encode(EncryptedChatMessage(messageId, sessionId, "user",
+                EncryptionManager.encrypt("Synthetic earlier message"), status = "SYNCED_DESKTOP"), EncryptionManager)
+            runBlocking {
+                dao.insertSession(VaultRecords.encode(EncryptedChatSession(sessionId, "Synthetic keyboard chat"), EncryptionManager))
+                dao.insertMessage(retained)
+            }
+            rule.waitUntil(20_000) { rule.onNodeWithTag("chat_session_item_$sessionId").isDisplayed() }
+            rule.onNodeWithTag("chat_session_item_$sessionId").performClick()
+            rule.waitUntil(20_000) { rule.onNodeWithTag("chat_message_input").isDisplayed() }
+            phase = "keyboard: actual IME, bounded multiline composer and visible history"
+            rule.onNodeWithTag("chat_message_input").performClick()
+            rule.waitUntil(10_000) { keyboardBottomInset() > 0 }
+            val draft = (1..12).joinToString("\n") { "Synthetic draft line $it" }
+            rule.onNodeWithTag("chat_message_input").performTextInput(draft)
+            rule.waitUntil(10_000) {
+                val keyboardTop = rule.activity.window.decorView.height - keyboardBottomInset()
+                rule.onNodeWithTag("chat_message_input").fetchSemanticsNode().boundsInWindow.bottom <= keyboardTop + 1f &&
+                    rule.onNodeWithTag("chat_send_button").fetchSemanticsNode().boundsInWindow.bottom <= keyboardTop + 1f
+            }
+            rule.onNodeWithTag("chat_message_input").assertTextContains(draft)
+            rule.onNodeWithTag("chat_send_button").assertIsDisplayed()
+            rule.onNodeWithTag("chat_message_card_$messageId").assertIsDisplayed()
+            val inputBounds = rule.onNodeWithTag("chat_message_input").fetchSemanticsNode().boundsInWindow
+            val historyBounds = rule.onNodeWithTag("chat_message_card_$messageId").fetchSemanticsNode().boundsInWindow
+            assertTrue("Recent history must stay above the composer while typing.", historyBounds.bottom <= inputBounds.top)
+            assertTrue("Long drafts must scroll inside the four-line composer, not fill the window.",
+                inputBounds.height <= 160f * rule.activity.resources.displayMetrics.density)
+            assertEquals("Typing must not modify or duplicate retained history.", retained,
+                runBlocking { dao.messageById(messageId) })
+            assertEquals(1, runBlocking { dao.allMessagesForMigration().count { it.sessionId == sessionId } })
+            assertTrue(device.pressBack())
+            rule.waitUntil(10_000) { keyboardBottomInset() == 0 }
+            rule.onNodeWithTag("chat_detail_screen").assertIsDisplayed()
+            rule.onNodeWithTag("chat_message_input").assertTextContains(draft)
+            rule.onNodeWithTag("chat_message_card_$messageId").assertIsDisplayed()
+            assertTrue("Normal typing must not relock the protected workspace.", EncryptionManager.hasCurrentAccess())
+        } catch (failure: Throwable) {
+            Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
+            throw failure
+        } finally {
+            runBlocking { dao.deleteMessagesForSession(sessionId); dao.deleteSession(sessionId) }
+            EncryptionManager.lock()
+        }
+    }
+
+    private fun keyboardBottomInset(): Int {
+        var bottom = 0
+        rule.runOnUiThread {
+            val insets = ViewCompat.getRootWindowInsets(rule.activity.window.decorView)
+            if (insets?.isVisible(WindowInsetsCompat.Type.ime()) == true) {
+                bottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            }
+        }
+        return bottom
     }
 
     private fun returnFromHome() {
