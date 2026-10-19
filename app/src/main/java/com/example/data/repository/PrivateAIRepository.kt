@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import com.example.data.crypto.EncryptionManager
 import com.example.data.crypto.SecureConfigStore
+import com.example.data.crypto.VaultUnavailableException
 import com.example.data.crypto.VaultCipher
 import com.example.data.crypto.VaultRecords
 import com.example.data.local.AppDatabase
@@ -50,6 +51,25 @@ class PrivateAIRepository(
     @Volatile private var workspaceGeneration = 0L
     private var polling: Job? = null
     private val activeRequests = java.util.concurrent.ConcurrentHashMap<Job, java.util.concurrent.atomic.AtomicInteger>()
+    private val activeStorage = mutableSetOf<CompletableDeferred<Unit>>()
+    private val localDrafts = LocalDraftStore(cipher, { route -> synchronized(pairingCommitGuard) {
+        requireReady()
+        require(route.isNotBlank() && route.length <= 512)
+        val identity = PairingConfigParser.destinationIdentity(_nodeConfig.value)
+        DraftScope(selectedDatabase.value, EncryptionManager.computeSha256(
+            "PrivateAI.localDraft.v1|${_nodeConfig.value.simulatedNodeEnabled}|$identity|$route"), workspaceGeneration)
+    } }, { token -> requireReady(); check(token.workspace == workspaceGeneration) { "The draft workspace changed. Unlock and reload it." } })
+    val localDraftWriteVersion get() = localDrafts.writeVersion
+    suspend fun loadLocalDraft(route: String) = localDrafts.load(route)
+    fun currentLocalDraft(token: LocalDraftToken) = localDrafts.current(token)
+    fun localDraftStatus(token: LocalDraftToken) = localDrafts.status(token)
+    fun updateLocalDraft(token: LocalDraftToken, serializedForm: String, autoSave: Boolean) = localDrafts.update(token, serializedForm, autoSave)
+    fun updateLocalDraftFields(token: LocalDraftToken, serializedFields: String, evidence: ChatAttachment?, autoSave: Boolean) = localDrafts.updateFields(token, serializedFields, evidence, autoSave)
+    suspend fun flushLocalDrafts() = localDrafts.flush()
+    fun prepareLocalDraftSubmission(token: LocalDraftToken, submittedForm: String, clearFields: Set<String>) = localDrafts.prepareSubmission(token, submittedForm, clearFields)
+    suspend fun deleteLocalDraft(token: LocalDraftToken) = localDrafts.delete(token)
+    fun acknowledgeLocalDraft(token: LocalDraftToken, submittedForm: String, reconcile: (String, String) -> String) = localDrafts.acknowledge(token, submittedForm, reconcile)
+    fun acknowledgeLocalDraft(token: LocalDraftToken, submittedForm: String, draftSubmission: LocalDraftSubmission?, reconcile: (String, String) -> String) = localDrafts.acknowledge(token, submittedForm, reconcile, draftSubmission)
     private val _vaultReady = MutableStateFlow(false)
     val vaultReady = _vaultReady.asStateFlow()
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.DISCONNECTED)
@@ -82,13 +102,36 @@ class PrivateAIRepository(
     val notifications = selectedDatabase.flatMapLatest { it.taskDao().getAllNotifications() }
         .combine(vaultReady) { rows, ready -> if (ready) rows.map { VaultRecords.decode(it, cipher) } else emptyList() }
 
-    fun onUnlocked(): Job = synchronized(pairingCommitGuard) {
-        val generation = ++workspaceGeneration
-        _vaultReady.value = false
-        opening?.cancel()
-        scope.launch {
+    private val retiredOpenings = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
+    fun onUnlocked(): Job {
+        var previousStorage: List<CompletableDeferred<Unit>> = emptyList()
+        val openingState = synchronized(pairingCommitGuard) {
+            val nextGeneration = ++workspaceGeneration
+            _vaultReady.value = false
+            previousStorage = activeStorage.toList()
+            opening?.let { retiredOpenings.add(it) }
+            Triple(nextGeneration, retiredOpenings.toList(), activeRequests.keys.toList()).also { opening = null }
+        }
+        val (generation, previousOpenings, previousRequests) = openingState
+        previousOpenings.forEach { it.cancel() }
+        previousRequests.forEach { it.cancel() }
+        val next = scope.launch(start = CoroutineStart.LAZY) {
         try {
+            // Join outside pairingCommitGuard: old finalizers need that monitor.
+            previousOpenings.joinAll()
+            retiredOpenings.removeAll(previousOpenings.toSet())
+            previousRequests.joinAll()
+            previousStorage.joinAll()
+            localDrafts.flush()
+            ensureActive()
+            synchronized(pairingCommitGuard) { check(generation == workspaceGeneration) }
             database.migrateLegacyContent(cipher)
+            if (cipher === EncryptionManager && EncryptionManager.hasPendingPolicyMigration()) {
+                val demo = demoDatabase ?: throw VaultUnavailableException()
+                demo.migrateLegacyContent(cipher)
+                EncryptionManager.completePendingPolicyMigration(database, demo, configStore, localDrafts::rewrapMemory)
+            }
+            localDrafts.reconcileAcknowledgments(listOfNotNull(database, demoDatabase))
             _nodeConfig.value = configStore?.load() ?: _nodeConfig.value
             _secureClinicalMode.value = _nodeConfig.value.secureClinicalMode
             selectWorkspace()
@@ -112,7 +155,13 @@ class PrivateAIRepository(
                 }
             }
         }
-        }.also { opening = it }
+        }
+        synchronized(pairingCommitGuard) {
+            if (generation == workspaceGeneration) opening = next else retiredOpenings.add(next)
+        }
+        if (generation != workspaceGeneration) next.cancel()
+        next.start()
+        return next
     }
 
     private fun restartPolling(generation: Long) {
@@ -139,7 +188,9 @@ class PrivateAIRepository(
         _vaultReady.value = false
         ++workspaceGeneration
         cancelPairing()
-        opening?.cancel(); polling?.cancel(); activeRequests.keys.forEach { it.cancel() }; nodeService.cancelAll()
+        localDrafts.onLocked()
+        opening?.let { retiredOpenings.add(it) }; retiredOpenings.forEach { it.cancel() }
+        polling?.cancel(); activeRequests.keys.forEach { it.cancel() }; nodeService.cancelAll()
         _connectionStatus.value = ConnectionStatus.DISCONNECTED
         _nodeStats.value = NodeStats()
         _workflowState.value = WorkflowSnapshot()
@@ -155,6 +206,12 @@ class PrivateAIRepository(
         if (job != null) activeRequests.compute(job) { _, count -> (count ?: java.util.concurrent.atomic.AtomicInteger()).apply { incrementAndGet() } }
         try { currentCoroutineContext().ensureActive(); return block() }
         finally { if (job != null) activeRequests.computeIfPresent(job) { _, count -> if (count.decrementAndGet() == 0) null else count } }
+    }
+    private suspend fun <T> withTrackedStorage(block: suspend () -> T): T {
+        val completion = CompletableDeferred<Unit>()
+        synchronized(pairingCommitGuard) { requireReady(); activeStorage.add(completion) }
+        try { currentCoroutineContext().ensureActive(); requireReady(); return block() }
+        finally { synchronized(pairingCommitGuard) { activeStorage.remove(completion); completion.complete(Unit) } }
     }
     fun authorizationGeneration(config: DesktopNodeConfig): Long? =
         if (_vaultReady.value && config == _nodeConfig.value) workspaceGeneration else null
@@ -376,18 +433,18 @@ class PrivateAIRepository(
         requireCurrent(config, generation)
         _phoneMeetings.value = rows; _meetingPending.value = count
     }
-    suspend fun createMeeting(title: String): String {
+    suspend fun createMeeting(title: String): String = withTrackedStorage {
         val (config, generation) = meetingDestination()
         val id = meetingOutbox.create(PairingConfigParser.destinationIdentity(config), title)
         requireCurrent(config, generation); loadPhoneMeetings(config, generation)
-        return id
+        return@withTrackedStorage id
     }
-    suspend fun saveMeetingAudio(id: String, wav: ByteArray) {
+    suspend fun saveMeetingAudio(id: String, wav: ByteArray) = withTrackedStorage {
         val (config, generation) = meetingDestination()
         meetingOutbox.append(PairingConfigParser.destinationIdentity(config), id, wav)
         requireCurrent(config, generation); loadPhoneMeetings(config, generation)
     }
-    suspend fun finishMeeting(id: String) {
+    suspend fun finishMeeting(id: String) = withTrackedStorage {
         val (config, generation) = meetingDestination()
         meetingOutbox.finish(PairingConfigParser.destinationIdentity(config), id)
         requireCurrent(config, generation); loadPhoneMeetings(config, generation)
@@ -414,24 +471,24 @@ class PrivateAIRepository(
         }
     }
 
-    suspend fun createNewSession(title: String, initialPrompt: String? = null): String {
+    suspend fun createNewSession(title: String, initialPrompt: String? = null): String = withTrackedStorage {
         requireReady()
         val id = UUID.randomUUID().toString()
         chatDao.insertSession(VaultRecords.encode(EncryptedChatSession(id, title.take(160), isSynced = false, modelUsed = "Unknown"), cipher))
         if (!initialPrompt.isNullOrBlank()) sendMessage(id, initialPrompt)
-        return id
+        return@withTrackedStorage id
     }
 
     suspend fun sendMessage(sessionId: String, prompt: String, attachment: ChatAttachment? = null,
-        onSaved: (ChatSubmissionReceipt) -> Unit = {}): ChatSubmissionReceipt = withTrackedRequest {
+        draftSubmission: LocalDraftSubmission? = null, onSaved: (ChatSubmissionReceipt) -> Unit = {}): ChatSubmissionReceipt = withTrackedRequest {
         requireReady()
         if (attachment != null) {
             val id = createCapture(prompt.ifBlank { "Evidence supplied for human review." }, "note", attachment = attachment,
-                onLocalSave = { onSaved(ChatSubmissionReceipt(sessionId, it, true, "CAPTURE_PENDING")) })
+                draftSubmission = draftSubmission, onLocalSave = { onSaved(ChatSubmissionReceipt(sessionId, it, true, "CAPTURE_PENDING")) })
             val status = documents.first().first { it.id == id }.fileType
             return@withTrackedRequest ChatSubmissionReceipt(sessionId, id, true, status)
         }
-        sendTextMessage(sessionId, prompt, _secureClinicalMode.value, _secureClinicalMode.value, onSaved)
+        sendTextMessage(sessionId, prompt, _secureClinicalMode.value, _secureClinicalMode.value, onSaved, draftSubmission)
     }
 
     /** A new explicit request, available only for a completed phone request with retained policy/binding. */
@@ -456,18 +513,20 @@ class PrivateAIRepository(
     }
 
     private suspend fun sendTextMessage(sessionId: String, prompt: String, requireLocal: Boolean, requireHipaa: Boolean,
-        onSaved: (ChatSubmissionReceipt) -> Unit): ChatSubmissionReceipt {
+        onSaved: (ChatSubmissionReceipt) -> Unit, draftSubmission: LocalDraftSubmission? = null): ChatSubmissionReceipt {
         requireReady()
         val destination = _nodeConfig.value
         val generation = workspaceGeneration
-        val targetDao = chatDao
+        val targetDatabase = selectedDatabase.value
+        val targetDao = targetDatabase.chatDao()
         val id = UUID.randomUUID().toString()
         DesktopNodeService.chatRequest(sessionId, prompt, id, requireLocal, requireHipaa)
         val message = EncryptedChatMessage(id, sessionId, "user", cipher.encrypt(prompt),
             status = "QUEUED_OFFLINE", modelName = "Unknown", desktopFingerprint = PairingConfigParser.destinationIdentity(destination).takeIf { it.isNotBlank() },
             requireLocal = requireLocal, requireHipaa = requireHipaa)
         requireCurrent(destination, generation)
-        targetDao.insertMessage(VaultRecords.encode(message, cipher))
+        val encodedMessage = VaultRecords.encode(message, cipher)
+        DraftAcknowledgments.commit(targetDatabase, draftSubmission) { targetDao.insertMessage(encodedMessage) }
         requireCurrent(destination, generation)
         onSaved(ChatSubmissionReceipt(sessionId, id, false, message.status))
         val session = getSessionById(sessionId).first()
@@ -547,7 +606,7 @@ class PrivateAIRepository(
     }
 
     suspend fun createCapture(text: String, kind: String = "note", location: String = "", owner: String = "", dueAt: Long? = null,
-        draftChannel: String? = null, attachment: ChatAttachment? = null, onLocalSave: (String) -> Unit = {}): String = withTrackedRequest {
+        draftChannel: String? = null, attachment: ChatAttachment? = null, draftSubmission: LocalDraftSubmission? = null, onLocalSave: (String) -> Unit = {}): String = withTrackedRequest {
         requireReady()
         val destination = _nodeConfig.value
         val generation = workspaceGeneration
@@ -559,7 +618,7 @@ class PrivateAIRepository(
             .put("dueAt", dueAt ?: JSONObject.NULL).put("observedAt", System.currentTimeMillis()).put("desktopFingerprint", PairingConfigParser.destinationIdentity(destination))
         if (draftChannel != null) { require(draftChannel in setOf("outlook","whatsapp")); data.put("draftChannel", draftChannel) }
         if (attachment != null) data.put("localEvidence", JSONObject().put("name", attachment.name).put("type", attachment.type).put("data", attachment.base64Data))
-        saveLocalDocument(sourceId, "$kind — pending desktop review", "CAPTURE_PENDING", data.toString(), "Pending capture")
+        saveLocalDocument(sourceId, "$kind — pending desktop review", "CAPTURE_PENDING", data.toString(), "Pending capture", draftSubmission)
         requireCurrent(destination, generation)
         onLocalSave(sourceId)
         if (_connectionStatus.value == ConnectionStatus.CONNECTED) {
@@ -646,29 +705,31 @@ class PrivateAIRepository(
         refreshWorkflowSnapshot(config, generation)
     }
 
-    suspend fun saveDocument(fileName: String, fileType: String, content: String, tags: String) {
+    suspend fun saveDocument(fileName: String, fileType: String, content: String, tags: String, draftSubmission: LocalDraftSubmission? = null) = withTrackedStorage {
         requireReady()
-        saveLocalDocument(UUID.randomUUID().toString(), fileName, fileType, content, tags)
+        saveLocalDocument(UUID.randomUUID().toString(), fileName, fileType, content, tags, draftSubmission)
     }
-    private suspend fun saveLocalDocument(id: String, name: String, type: String, content: String, tags: String) {
+    private suspend fun saveLocalDocument(id: String, name: String, type: String, content: String, tags: String, draftSubmission: LocalDraftSubmission? = null) {
         requireReady()
-        documentDao.insertDocument(VaultRecords.encode(EncryptedDocument(id, name.take(160), type, cipher.encrypt(content),
-            EncryptionManager.computeSha256(content), content.toByteArray().size.toLong(), syncedWithDesktop = type == "CAPTURE_RECEIPT", tags = tags), cipher))
+        val target = selectedDatabase.value
+        val encoded = VaultRecords.encode(EncryptedDocument(id, name.take(160), type, cipher.encrypt(content),
+            EncryptionManager.computeSha256(content), content.toByteArray().size.toLong(), syncedWithDesktop = type == "CAPTURE_RECEIPT", tags = tags), cipher)
+        DraftAcknowledgments.commit(target, draftSubmission) { target.documentDao().insertDocument(encoded) }
     }
-    suspend fun deleteDocument(id: String) { requireReady(); documentDao.deleteDocument(id) }
-    suspend fun deleteSession(id: String) { requireReady(); chatDao.deleteMessagesForSession(id); chatDao.deleteSession(id) }
-    suspend fun markNotificationRead(id: String) { requireReady(); taskDao.markNotificationRead(id) }
-    suspend fun markAllNotificationsRead() { requireReady(); taskDao.markAllNotificationsRead() }
-    suspend fun acknowledgeAlert(id: String) { requireReady(); taskDao.acknowledgeNotification(id) } // Local read marker; never clinical closure.
+    suspend fun deleteDocument(id: String) = withTrackedStorage { requireReady(); documentDao.deleteDocument(id) }
+    suspend fun deleteSession(id: String) = withTrackedStorage { requireReady(); chatDao.deleteMessagesForSession(id); chatDao.deleteSession(id) }
+    suspend fun markNotificationRead(id: String) = withTrackedStorage { requireReady(); taskDao.markNotificationRead(id) }
+    suspend fun markAllNotificationsRead() = withTrackedStorage { requireReady(); taskDao.markAllNotificationsRead() }
+    suspend fun acknowledgeAlert(id: String) = withTrackedStorage { requireReady(); taskDao.acknowledgeNotification(id) } // Local read marker; never clinical closure.
     fun setSecureClinicalMode(enabled: Boolean) = updateConfig(_nodeConfig.value.copy(secureClinicalMode = enabled))
     fun setModelProcessingMode(mode: String) { DesktopNodeService.unsupported("Changing desktop processing policy from the phone") }
-    suspend fun startAgent(name: String) { requireReady(); taskDao.insertTask(VaultRecords.encode(nodeService.startAgent(name, _nodeConfig.value), cipher)) }
-    suspend fun runPlaybook(name: String) { requireReady(); taskDao.insertTask(VaultRecords.encode(nodeService.runPlaybook(name, _nodeConfig.value), cipher)) }
-    suspend fun cancelTask(id: String) { requireReady(); nodeService.cancelTask(id, _nodeConfig.value); taskDao.updateTaskStatus(id, "CANCELLED") }
-    suspend fun retryTask(id: String) { requireReady(); nodeService.retryTask(id, _nodeConfig.value); taskDao.updateTaskStatus(id, "QUEUED") }
-    suspend fun submitApproval(id: String, approved: Boolean) { requireReady(); nodeService.submitApproval(id, approved, _nodeConfig.value); taskDao.updateTaskStatus(id, if (approved) "RUNNING" else "REJECTED") }
+    suspend fun startAgent(name: String) = withTrackedRequest { requireReady(); taskDao.insertTask(VaultRecords.encode(nodeService.startAgent(name, _nodeConfig.value), cipher)) }
+    suspend fun runPlaybook(name: String) = withTrackedRequest { requireReady(); taskDao.insertTask(VaultRecords.encode(nodeService.runPlaybook(name, _nodeConfig.value), cipher)) }
+    suspend fun cancelTask(id: String) = withTrackedRequest { requireReady(); nodeService.cancelTask(id, _nodeConfig.value); taskDao.updateTaskStatus(id, "CANCELLED") }
+    suspend fun retryTask(id: String) = withTrackedRequest { requireReady(); nodeService.retryTask(id, _nodeConfig.value); taskDao.updateTaskStatus(id, "QUEUED") }
+    suspend fun submitApproval(id: String, approved: Boolean) = withTrackedRequest { requireReady(); nodeService.submitApproval(id, approved, _nodeConfig.value); taskDao.updateTaskStatus(id, if (approved) "RUNNING" else "REJECTED") }
     fun stopStreaming() { activeRequests.keys.forEach { it.cancel() }; nodeService.cancelAll() }
-    fun close() { onLocked(); scope.cancel() }
+    fun close() { onLocked(); localDrafts.close(); scope.cancel() }
 
     private suspend fun seedDemo() {
         if (chatDao.getAllSessions().first().isNotEmpty()) return

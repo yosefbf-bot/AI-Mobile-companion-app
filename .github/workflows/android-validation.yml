@@ -118,6 +118,14 @@ jobs:
           adb shell settings put system screen_off_timeout 1800000
           adb shell input keyevent 224
           adb shell input keyevent 82
+      - name: Verify a fresh phone without a secure screen lock stays locked
+        run: |
+          # Run before provisioning the synthetic PIN. Removing a real PIN later
+          # could permanently invalidate Android authentication-bound vault keys.
+          ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.example.SecureScreenLockAcceptanceTest
+          test -d app/build/outputs/androidTest-results/connected
+          mkdir -p app/build/reports/ci-emulator/pre-pin
+          cp -R app/build/outputs/androidTest-results/connected app/build/reports/ci-emulator/pre-pin/connected
           # This PIN belongs only to this disposable, account-free CI emulator.
           adb shell locksettings set-pin 846219
       - name: Run actual Android lock and startup acceptance
@@ -129,7 +137,7 @@ jobs:
           adb logcat -v threadtime >app/build/reports/ci-emulator/instrumentation-logcat.txt &
           logcat_pid=$!
           trap 'kill "$logcat_pid" 2>/dev/null || true' EXIT
-          ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.privateai.test.devicePin=846219
+          ./gradlew --no-daemon connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.privateai.test.devicePin=846219 -Pandroid.testInstrumentationRunnerArguments.notClass=com.example.SecureScreenLockAcceptanceTest
       - name: Capture disposable emulator failure evidence
         if: failure()
         run: |
@@ -159,6 +167,7 @@ jobs:
             app/build/reports/
             app/build/test-results/
             app/build/outputs/androidTest-results/
+            app/schemas/
           retention-days: ${{ github.event_name == 'workflow_dispatch' && 14 || github.event_name == 'pull_request' && 3 || 7 }}
           if-no-files-found: warn
 

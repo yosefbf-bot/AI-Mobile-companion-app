@@ -8,6 +8,12 @@ import com.example.data.local.entity.PendingOperation
 
 @Dao
 interface PendingOperationDao {
+
+    @Query("SELECT * FROM pending_operations WHERE (:after IS NULL OR id > :after) ORDER BY id LIMIT :limit")
+    suspend fun allAfterForPolicy(after: String?, limit: Int): List<PendingOperation>
+    @androidx.room.Update
+    suspend fun updateForPolicy(operation: PendingOperation)
+
     @Query("SELECT * FROM pending_operations WHERE status = 'PENDING' AND operation LIKE 'MEETING_%' AND desktopFingerprint = :fingerprint ORDER BY createdAt, rowid LIMIT 1")
     suspend fun nextMeeting(fingerprint: String): PendingOperation?
 

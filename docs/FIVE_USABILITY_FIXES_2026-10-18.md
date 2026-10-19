@@ -1,3 +1,65 @@
+# Secure phone sessions and encrypted local auto-drafts — October 19, 2026
+
+Current development branch `chatgpt/secure-unlock-autodrafts-2026-10-19` starts
+from accepted screenshot main `5dc5501b770cb09d1e86a9fe4ef9d5fd86639b45`.
+Current candidate version: **1.2.4-dev / code 7** (original app ID and signer).
+The owner authorized 5 (default), 10, 20 and 30 minute foreground sessions and
+requires an actual secure Android phone screen lock. None/Swipe, unavailable
+security state and a currently locked phone fail closed. Changes require fresh
+Android authentication; phone lock, backgrounding, Lock now and security expiry
+still revoke access. There is no indefinite Off option, application PIN bypass,
+typing/polling renewal or exported key. Existing data/keys/pairings are preserved
+through recoverable authenticated policy migration before workspace readiness.
+
+The owner's later auto-draft instruction replaces the earlier discard proposal:
+**changing a timeout never asks to discard or clears unfinished work**. Settings
+has one default-on **Auto-save drafts** control. Draft text and evidence stay
+encrypted on this phone and never auto-send or sync to the desktop. Turning it
+off retains existing saved drafts; explicit Delete draft requires confirmation
+and protects newer revisions against stale autosave callbacks. Failed saves
+remain visible and RAM fallback is not described as durable storage.
+
+Chats, Notes, manual Library documents, new chat/meeting titles, action edits and
+internal recipient/subject/body edits reuse one local draft controller. Pairing
+links and search queries are excluded; meeting audio already uses its existing
+durable chunk outbox. Restore/loading gates precede editable composition. Small
+text fields and stable evidence references avoid rebuilding multi-megabyte
+attachment JSON on each keystroke. The core coalesces encrypted writes and uses
+bounded evidence/body hydration. Successful durable Send/Save acknowledgments
+clear only unchanged submitted fields, including with auto-save off; encrypted
+transaction receipts reconcile commits that cross lock/restart. Other edits and
+failed submissions remain. Screenshot preference/clinical policy stay separate.
+
+**Current-source validation is pending.** Fourteen new UI behavioral unit cases
+are authored (prompt attempt ownership, working choices/phone-lock capability,
+preferences/conditional acknowledgments, actual Compose+Room restore/delete
+races), retaining existing unit identities. All ten prior device cases remain
+unchanged; two new actual cases bring the required inventory to twelve: a fresh
+pre-PIN unprotected-phone rejection, then a real OS-authenticated session beyond
+300 seconds, five-MiB unsent and saved/pending evidence hydration, lock revocation
+and normal authenticated migration back to five minutes. These are authored
+assertions, not passes. No local emulator, phone installation or CI execution
+was performed by this UI implementation step. Coherent build/unit/lint and all
+twelve hosted actual-device cases remain required; core test totals/results will
+be recorded from real output after the joint source freeze.
+
+After the schema 4-to-5 and opt-in PAI3 storage upgrade, an older APK is not
+an in-place rollback. Returning to five minutes restores the original cipher
+format, not Room schema 4. Update over the same application ID with the original
+signer; never uninstall or clear app data to recover. Preserve keys and pairing,
+and use a compatible corrected update if recovery is required. Old APKs remain
+reference evidence, and the owner's installed app is unchanged.
+
+The owner deferred hands-on phone/OEM testing, not our verification. Background
+follow-up notices remain Android-scheduled best effort (15-minute minimum,
+Doze/battery/network/PC reachability can delay them); they are not guaranteed
+immediate alerts. Owner-phone/OEM, live accounts, microphone, notifications,
+LAN, reboot and installed-app upgrade acceptance remain unperformed/deferred.
+No cloud/relay/dependency/signing identity or owner installation is added.
+
+---
+Prior accepted and failed-run evidence follows unchanged.
+
 ## Screenshot device-fixture follow-up — October 19, 2026
 
 Run39305305505 atc44fe16:116 hosted unit passes, two named unavailable desktop-fixture

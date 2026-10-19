@@ -83,7 +83,9 @@ fun DocumentVaultScreen(
     onPickEvidence: ((String) -> Unit)? = null, onTakePhoto: (() -> Unit)? = null,
     incomingEvidence: ChatAttachment? = null, onConsumeEvidence: () -> Unit = {},
     loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
-    lastSavedCaptureId: String? = null
+    draftState: LocalDraftFormState? = null,
+    onDraftFieldsChange: ((String, ChatAttachment?) -> Unit)? = null,
+    lastSavedCaptureId: String? = null, documentSaved: Long = 0
 ) {
     val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
@@ -95,6 +97,16 @@ fun DocumentVaultScreen(
     var newDocContent by remember { mutableStateOf(restored.optString("content")) }
     var evidence by remember { mutableStateOf(formAttachment(restored)) }
     var submittedEvidence by remember { mutableStateOf<Pair<ChatAttachment,String?>?>(null) }
+    var submittedDocument by remember { mutableStateOf<Triple<String,String,Long>?>(null) }
+    LaunchedEffect(documentSaved) {
+        submittedDocument?.let { (title, content, before) ->
+            if (documentSaved != before) {
+                if (newDocTitle == title) newDocTitle = ""
+                if (newDocContent == content) newDocContent = ""
+                submittedDocument = null
+            }
+        }
+    }
     LaunchedEffect(lastSavedCaptureId) {
         submittedEvidence?.let { (saved, priorId) ->
             if (lastSavedCaptureId != null && lastSavedCaptureId != priorId) {
@@ -104,8 +116,14 @@ fun DocumentVaultScreen(
         }
     }
     LaunchedEffect(incomingEvidence) { incomingEvidence?.let { evidence = it; onConsumeEvidence() } }
-    LaunchedEffect(newDocTitle,newDocContent,evidence) { onUnsentDraftChange(JSONObject().put("title",newDocTitle).put("content",newDocContent).put("evidence",attachmentForm(evidence)).toString()) }
-    var newDocTags by remember { mutableStateOf("Confidential, Clinical Report") }
+    var newDocTags by remember { mutableStateOf(restored.optString("tags", "Confidential, Clinical Report")) }
+    fun draftFields() = JSONObject().put("title",newDocTitle).put("content",newDocContent).put("tags",newDocTags).toString()
+    fun saveDraftFields() {
+        onDraftFieldsChange?.invoke(draftFields(), evidence)
+            ?: onUnsentDraftChange(JSONObject(draftFields()).put("evidence", attachmentForm(evidence)).toString())
+    }
+    CaptureLatestDraft(draftState) { draftFields() to evidence }
+    LaunchedEffect(newDocTitle,newDocContent,newDocTags,evidence) { saveDraftFields() }
 
     // File picker launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -376,7 +394,7 @@ fun DocumentVaultScreen(
                     Spacer(modifier = Modifier.height(10.dp))
                     OutlinedTextField(
                         value = newDocTitle,
-                        onValueChange = { newDocTitle = it },
+                        onValueChange = { newDocTitle = it; saveDraftFields() },
                         label = { Text("File Name") },
                         placeholder = { Text("e.g. Clinical_Brief.md") },
                         singleLine = true,
@@ -385,7 +403,7 @@ fun DocumentVaultScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = newDocContent,
-                        onValueChange = { newDocContent = it },
+                        onValueChange = { newDocContent = it; saveDraftFields() },
                         label = { Text("Content") },
                         modifier = Modifier.fillMaxWidth().height(140.dp).testTag("new_doc_content_input"),
                         maxLines = 8
@@ -396,9 +414,9 @@ fun DocumentVaultScreen(
                 Button(
                     onClick = {
                         if (newDocTitle.isNotBlank() && newDocContent.isNotBlank()) {
+                            saveDraftFields()
+                            submittedDocument = Triple(newDocTitle, newDocContent, documentSaved)
                             onSaveDocument(newDocTitle.trim(), newDocType, newDocContent.trim(), newDocTags)
-                            newDocTitle = ""
-                            newDocContent = ""
                             showAddDialog = false
                         }
                     },

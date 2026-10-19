@@ -59,7 +59,7 @@ fun ChatListScreen(
     onSessionClick: (String) -> Unit,
     onCreateNewSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier, draftController: com.example.ui.LocalDraftController? = null
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showNewChatDialog by remember { mutableStateOf(false) }
@@ -184,7 +184,19 @@ fun ChatListScreen(
         }
     }
 
-    if (showNewChatDialog) {
+    if (showNewChatDialog && draftController != null) {
+        com.example.ui.components.LocalDraftDialog(draftController, "chat:new-title", "New Encrypted Chat", { showNewChatDialog = false }) { draft ->
+            val restored = remember { com.example.ui.components.unsentForm(draft.form) }
+            var title by remember { mutableStateOf(restored.optString("title")) }
+            fun fields() = org.json.JSONObject().put("title", title).toString()
+            com.example.ui.components.CaptureLatestDraft(draft) { fields() to null }
+            Column {
+                OutlinedTextField(title, { title = it; draft.update(fields()) }, label = { Text("Chat Title or Topic") }, modifier = Modifier.testTag("new_chat_title_input"))
+                Button(onClick = { draft.update(fields()); onCreateNewSession(title.ifBlank { "Encrypted Session" }); showNewChatDialog = false },
+                    modifier = Modifier.testTag("confirm_create_chat_button")) { Text("Create") }
+            }
+        }
+    } else if (showNewChatDialog) {
         AlertDialog(
             onDismissRequest = { showNewChatDialog = false },
             title = { Text("New Encrypted Chat") },
