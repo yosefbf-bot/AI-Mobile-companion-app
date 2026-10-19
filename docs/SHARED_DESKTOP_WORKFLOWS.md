@@ -1,3 +1,19 @@
+## Android 1.2.3-dev usability candidate — October 18–19, 2026
+
+Both APK builds and the full local 112-case unit suite pass with zero skips, including
+actual legacy/v2 desktop TLS interoperability. Local lint did not execute because both
+automatic approval attempts timed out before process creation. Mandatory current hosted
+lint/unit/all nine actual API 34 device cases remain pending before merge/distribution.
+See [scope, exact local results and retained first failures](FIVE_USABILITY_FIXES_2026-10-18.md).
+Active chat displays protected feedback and delivery/review errors. Attachments save
+evidence notes in Notes/Library; only unchanged submitted fields clear at the durable
+local save, including the encrypted RAM draft. Later edits and failed drafts remain.
+Check Library for pending/acknowledged/review status. Files are not uploaded into chat
+or interpreted by AI. The chat badge reuses check/sync and stale behavior. **Ask again ·
+new request** repeats an exact completed original phone text question under its original
+minimum privacy and same pairing. It creates a new request, without rewinding context
+or retrying uncertain delivery; histories without policy provenance have no action.
+
 ## October14 current companion source
 
 See [Local QR pairing](COMPANION_PAIRING_2026-10-14.md). Newsource1.2-dev/code3

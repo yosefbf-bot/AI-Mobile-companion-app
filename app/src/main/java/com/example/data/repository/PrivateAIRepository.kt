@@ -422,21 +422,60 @@ class PrivateAIRepository(
         return id
     }
 
-    suspend fun sendMessage(sessionId: String, prompt: String, attachment: ChatAttachment? = null) {
+    suspend fun sendMessage(sessionId: String, prompt: String, attachment: ChatAttachment? = null,
+        onSaved: (ChatSubmissionReceipt) -> Unit = {}): ChatSubmissionReceipt = withTrackedRequest {
         requireReady()
         if (attachment != null) {
-            createCapture(prompt.ifBlank { "Evidence supplied for human review." }, "note", attachment = attachment)
-            return
+            val id = createCapture(prompt.ifBlank { "Evidence supplied for human review." }, "note", attachment = attachment,
+                onLocalSave = { onSaved(ChatSubmissionReceipt(sessionId, it, true, "CAPTURE_PENDING")) })
+            val status = documents.first().first { it.id == id }.fileType
+            return@withTrackedRequest ChatSubmissionReceipt(sessionId, id, true, status)
         }
+        sendTextMessage(sessionId, prompt, _secureClinicalMode.value, _secureClinicalMode.value, onSaved)
+    }
+
+    /** A new explicit request, available only for a completed phone request with retained policy/binding. */
+    suspend fun askAgain(sessionId: String, originalMessageId: String,
+        onSaved: (ChatSubmissionReceipt) -> Unit = {}): ChatSubmissionReceipt = withTrackedRequest {
+        requireReady()
+        val config = _nodeConfig.value
+        val generation = workspaceGeneration
+        val original = chatDao.messageById(originalMessageId)?.let { VaultRecords.decode(it, cipher) }
+            ?: throw GatewayException("REVIEW_CHANGED", 409, "The original question is no longer available. Review the conversation before asking again.")
+        if (original.sessionId != sessionId || original.sender != "user" || original.status != "SYNCED_DESKTOP" ||
+            original.attachmentName != null || original.attachmentDataEncrypted != null) {
+            throw GatewayException("REVIEW_CHANGED", 409, "Only a completed text question can be asked again. Review pending or uncertain delivery on the desktop.")
+        }
+        requireCurrent(config, generation)
+        val destination = PairingConfigParser.destinationIdentity(config)
+        if (destination.isBlank() || original.desktopFingerprint != destination) {
+            throw GatewayException("PAIRING_CHANGED", 403, "The original question belongs to another or unknown desktop pairing. Review it before making a new request.")
+        }
+        sendTextMessage(sessionId, cipher.decrypt(original.encryptedContent),
+            original.requireLocal || _secureClinicalMode.value, original.requireHipaa || _secureClinicalMode.value, onSaved)
+    }
+
+    private suspend fun sendTextMessage(sessionId: String, prompt: String, requireLocal: Boolean, requireHipaa: Boolean,
+        onSaved: (ChatSubmissionReceipt) -> Unit): ChatSubmissionReceipt {
+        requireReady()
+        val destination = _nodeConfig.value
+        val generation = workspaceGeneration
+        val targetDao = chatDao
         val id = UUID.randomUUID().toString()
-        DesktopNodeService.chatRequest(sessionId,prompt,id,_secureClinicalMode.value,_secureClinicalMode.value)
+        DesktopNodeService.chatRequest(sessionId, prompt, id, requireLocal, requireHipaa)
         val message = EncryptedChatMessage(id, sessionId, "user", cipher.encrypt(prompt),
-            status = "QUEUED_OFFLINE", modelName = "Unknown", desktopFingerprint = PairingConfigParser.destinationIdentity(_nodeConfig.value).takeIf { it.isNotBlank() },
-            requireLocal = _secureClinicalMode.value, requireHipaa = _secureClinicalMode.value)
-        chatDao.insertMessage(VaultRecords.encode(message, cipher))
+            status = "QUEUED_OFFLINE", modelName = "Unknown", desktopFingerprint = PairingConfigParser.destinationIdentity(destination).takeIf { it.isNotBlank() },
+            requireLocal = requireLocal, requireHipaa = requireHipaa)
+        requireCurrent(destination, generation)
+        targetDao.insertMessage(VaultRecords.encode(message, cipher))
+        requireCurrent(destination, generation)
+        onSaved(ChatSubmissionReceipt(sessionId, id, false, message.status))
         val session = getSessionById(sessionId).first()
-        if (session != null) chatDao.insertSession(VaultRecords.encode(session.copy(lastMessagePreviewEncrypted = cipher.encrypt(prompt), lastMessageTimestamp = message.timestamp), cipher))
+        requireCurrent(destination, generation)
+        if (session != null) targetDao.insertSession(VaultRecords.encode(session.copy(lastMessagePreviewEncrypted = cipher.encrypt(prompt), lastMessageTimestamp = message.timestamp), cipher))
         if (_connectionStatus.value in setOf(ConnectionStatus.CONNECTED, ConnectionStatus.DEMO)) deliver(message)
+        requireCurrent(destination, generation)
+        return ChatSubmissionReceipt(sessionId, id, false, targetDao.messageById(id)?.status ?: message.status)
     }
 
     private suspend fun deliver(message: EncryptedChatMessage) = withTrackedRequest { delivery.withLock {
@@ -508,7 +547,7 @@ class PrivateAIRepository(
     }
 
     suspend fun createCapture(text: String, kind: String = "note", location: String = "", owner: String = "", dueAt: Long? = null,
-        draftChannel: String? = null, attachment: ChatAttachment? = null): String = withTrackedRequest {
+        draftChannel: String? = null, attachment: ChatAttachment? = null, onLocalSave: (String) -> Unit = {}): String = withTrackedRequest {
         requireReady()
         val destination = _nodeConfig.value
         val generation = workspaceGeneration
@@ -522,6 +561,7 @@ class PrivateAIRepository(
         if (attachment != null) data.put("localEvidence", JSONObject().put("name", attachment.name).put("type", attachment.type).put("data", attachment.base64Data))
         saveLocalDocument(sourceId, "$kind — pending desktop review", "CAPTURE_PENDING", data.toString(), "Pending capture")
         requireCurrent(destination, generation)
+        onLocalSave(sourceId)
         if (_connectionStatus.value == ConnectionStatus.CONNECTED) {
             try { requireCurrent(destination, generation); replayCaptures(destination, generation); refreshWorkflowSnapshot(destination, generation) }
             catch (e: Exception) {

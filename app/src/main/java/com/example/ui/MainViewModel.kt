@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import com.example.ui.pairing.PairingUiState
+import com.example.ui.components.acknowledgeChatDraft
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -78,6 +79,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val modelProcessingMode get() = repository.modelProcessingMode
     private val _isStreamingResponse = MutableStateFlow(false)
     val isStreamingResponse = _isStreamingResponse.asStateFlow()
+    private val _lastSavedChatSubmission = MutableStateFlow<ChatSubmissionReceipt?>(null)
+    val lastSavedChatSubmission = _lastSavedChatSubmission.asStateFlow()
+    private val _chatSubmissionFinished = MutableStateFlow(0L)
+    val chatSubmissionFinished = _chatSubmissionFinished.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -89,6 +94,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     stopPairingScanner?.invoke(); cancelPairing()
                     stopMeetingRecording?.invoke(); repository.onLocked(); _pendingEvidence.value = null; _lastSavedCaptureId.value = null; _selectedDocument.value = null
+                    _lastSavedChatSubmission.value = null; _userFeedback.value = null
                 }
             }
         }
@@ -127,15 +133,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _userFeedback.value = if (result.success) "Desktop check completed. ${result.itemsSynced} records updated." else result.errorMessage ?: "Desktop check failed."
     }
     fun sendMessage(prompt: String, attachment: ChatAttachment? = null) {
-        val id = _activeSessionId.value ?: return
         if (prompt.isBlank() && attachment == null) return
+        val route = "chat:" + (_activeSessionId.value ?: return)
+        val submitted = restoreUnsentDraft(route)
+        submitChat { id -> repository.sendMessage(id, prompt, attachment, onSaved = {
+            // Acknowledge the encrypted-RAM form immediately, even if lock/navigation
+            // disposes the composer before its next frame handles the receipt.
+            saveUnsentDraft(route, acknowledgeChatDraft(restoreUnsentDraft(route), submitted))
+            _lastSavedChatSubmission.value = it
+        }) }
+    }
+    fun askAgain(originalMessageId: String) {
+        submitChat { id -> repository.askAgain(id, originalMessageId, onSaved = { _lastSavedChatSubmission.value = it }) }
+    }
+    private fun submitChat(send: suspend (String) -> ChatSubmissionReceipt) {
+        val id = _activeSessionId.value ?: return
+        // Set synchronously before launching, including the brief interval before the first frame.
+        if (_isStreamingResponse.value) return
+        _isStreamingResponse.value = true
+        _lastSavedChatSubmission.value = null
         operation {
-            _isStreamingResponse.value = true
             try {
-                repository.sendMessage(id, prompt, attachment)
-                _userFeedback.value = if (attachment != null) "Evidence note saved or queued for review. Image contents were not interpreted."
-                    else if (connectionStatus.value == ConnectionStatus.DISCONNECTED) "Saved on this phone; pending desktop delivery." else null
-            } finally { _isStreamingResponse.value = false }
+                val receipt = send(id)
+                _userFeedback.value = if (receipt.evidenceNote) when (receipt.status) {
+                    "CAPTURE_RECEIPT" -> "Evidence note saved in Library and acknowledged by the desktop for review. Image contents were not interpreted."
+                    "CAPTURE_REVIEW_REQUIRED" -> "Evidence note saved in Library; desktop delivery requires review. Image contents were not interpreted."
+                    else -> "Evidence note saved on this phone in Notes/Library; pending desktop delivery and review. Image contents were not interpreted."
+                } else if (receipt.status != "SYNCED_DESKTOP") "Saved on this phone; pending desktop delivery." else null
+            } finally { _isStreamingResponse.value = false; _chatSubmissionFinished.value++ }
         }
     }
     fun decrypt(content: String): String = try { if (vaultReady.value) EncryptionManager.decrypt(content) else "" }
@@ -212,7 +237,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun acknowledgeAlert(id: String) = operation("Marked read on this phone. This does not close a clinical alert.") { repository.acknowledgeAlert(id) }
     fun markNotificationRead(id: String) = operation { repository.markNotificationRead(id) }
     fun markAllNotificationsRead() = operation { repository.markAllNotificationsRead() }
-    fun stopStreaming() { repository.stopStreaming(); _isStreamingResponse.value = false; _userFeedback.value = "Request stopped. Review pending delivery before submitting another request." }
+    fun stopStreaming() { repository.stopStreaming(); _userFeedback.value = "Request stopped. Review pending delivery before submitting another request." }
     fun unlockWithPin(pin: String) = biometricAuthManager.unlockWithPin(pin)
     fun lockVault() { stopPairingScanner?.invoke(); cancelPairing(); stopMeetingRecording?.invoke(); repository.onLocked(); biometricAuthManager.lock(); _activeSessionId.value = null; _selectedDocument.value = null }
     fun refreshWorkflows() = triggerSync()

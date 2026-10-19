@@ -17,6 +17,10 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assert
+import com.example.data.model.ChatAttachment
 import androidx.compose.ui.test.assertTextContains
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -39,6 +43,7 @@ import org.junit.Assume.assumeTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -222,6 +227,84 @@ class OsCredentialKeystoreAcceptanceTest {
             throw failure
         } finally {
             runBlocking { dao.deleteMessagesForSession(sessionId); dao.deleteSession(sessionId) }
+            EncryptionManager.lock()
+        }
+    }
+
+    @Test fun actualOsUnlockChatEvidenceSaveShowsFeedbackAndClearsOnlyDurablySavedDraft() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
+        assumeTrue("A disposable emulator OS credential must be explicitly supplied.", !pin.isNullOrBlank())
+        val device = UiDevice.getInstance(instrumentation)
+        val database = AppDatabase.getInstance(instrumentation.targetContext)
+        val sessionId = "synthetic-chat-evidence-save"
+        lateinit var model: MainViewModel
+        var captureId: String? = null
+        val feedback = "Evidence note saved on this phone in Notes/Library; pending desktop delivery and review. Image contents were not interpreted."
+        try {
+            phase = "chat evidence: actual OS authentication"
+            val entry = credentialField(device)
+            assertNotNull("Saving chat evidence requires real OS authentication.", entry)
+            entry!!.text = pin!!
+            device.pressEnter()
+            rule.waitUntil(20_000) { EncryptionManager.hasCurrentAccess() }
+            rule.activityRule.scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
+            rule.waitUntil(20_000) { model.vaultReady.value }
+            assertFalse("This disposable-device case must remain unpaired and account-free.", model.nodeConfig.value.isPaired)
+            runBlocking { database.chatDao().insertSession(VaultRecords.encode(
+                EncryptedChatSession(sessionId, "Synthetic chat evidence"), EncryptionManager)) }
+            rule.waitUntil(20_000) { rule.onNodeWithTag("chat_session_item_$sessionId").isDisplayed() }
+            rule.onNodeWithTag("chat_session_item_$sessionId").performClick()
+            rule.waitUntil(20_000) { rule.onNodeWithTag("chat_message_input").isDisplayed() }
+            rule.activityRule.scenario.onActivity {
+                model.acceptPendingEvidence("chat:$sessionId", ChatAttachment("synthetic.txt", "DOCUMENT", "c3ludGhldGlj", 9))
+            }
+            rule.waitUntil(10_000) { rule.onNodeWithTag("attachment_preview_card").isDisplayed() }
+            rule.onNodeWithTag("chat_message_input").performTextInput("Synthetic evidence note")
+            phase = "chat evidence: durable offline save and visible feedback"
+            rule.onNodeWithTag("chat_send_button").performClick()
+            rule.waitUntil(10_000) { model.lastSavedChatSubmission.value != null && !model.isStreamingResponse.value }
+            captureId = model.lastSavedChatSubmission.value!!.id
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+            rule.onNodeWithText(feedback).assertIsDisplayed()
+            rule.onNodeWithTag("attachment_preview_card").assertDoesNotExist()
+            rule.onNodeWithTag("chat_message_input").assert(androidx.compose.ui.test.SemanticsMatcher.expectValue(
+                androidx.compose.ui.semantics.SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+            rule.onNodeWithTag("chat_send_button").assertIsNotEnabled()
+            val document = runBlocking { model.repository.documents.first().single { it.id == captureId } }
+            assertEquals("CAPTURE_PENDING", document.fileType)
+            val payload = org.json.JSONObject(EncryptionManager.decrypt(document.encryptedContent))
+            assertEquals("Synthetic evidence note", payload.getString("text"))
+            assertEquals("c3ludGhldGlj", payload.getJSONObject("localEvidence").getString("data"))
+            assertTrue(runBlocking { database.chatDao().getMessagesForSession(sessionId).first().isEmpty() })
+
+            phase = "chat evidence: failed local submission retains draft with chat feedback"
+            val failedDraft = "x".repeat(12001)
+            rule.onNodeWithTag("chat_message_input").performTextReplacement(failedDraft)
+            rule.onNodeWithTag("chat_send_button").performClick()
+            val failure = "This message is too long for the desktop. Send shorter sections of up to 12,000 characters."
+            rule.waitUntil(10_000) { model.chatSubmissionFinished.value >= 2 }
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+            rule.onNodeWithText(failure).assertIsDisplayed()
+            rule.onNodeWithTag("chat_message_input").assertTextContains(failedDraft)
+            rule.onNodeWithTag("chat_send_button").assertIsEnabled()
+            assertEquals(1, runBlocking { model.repository.documents.first().count { it.id == captureId } })
+            assertTrue(runBlocking { database.chatDao().getMessagesForSession(sessionId).first().isEmpty() })
+            EncryptionManager.lock()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
+            rule.onNodeWithText(failure).assertDoesNotExist()
+            rule.onNodeWithTag("chat_detail_screen").assertDoesNotExist()
+        } catch (failure: Throwable) {
+            Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
+            throw failure
+        } finally {
+            runBlocking {
+                captureId?.let { database.documentDao().deleteDocument(it) }
+                database.chatDao().deleteMessagesForSession(sessionId)
+                database.chatDao().deleteSession(sessionId)
+            }
             EncryptionManager.lock()
         }
     }

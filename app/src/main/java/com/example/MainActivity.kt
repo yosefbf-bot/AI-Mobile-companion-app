@@ -264,6 +264,8 @@ class MainActivity : FragmentActivity() {
                 val secureClinicalMode by viewModel.secureClinicalMode.collectAsStateWithLifecycle()
                 val modelMode by viewModel.modelProcessingMode.collectAsStateWithLifecycle()
                 val isStreamingResponse by viewModel.isStreamingResponse.collectAsStateWithLifecycle()
+                val lastSavedChatSubmission by viewModel.lastSavedChatSubmission.collectAsStateWithLifecycle()
+                val chatSubmissionFinished by viewModel.chatSubmissionFinished.collectAsStateWithLifecycle()
                 val pairingState by viewModel.pairingState.collectAsStateWithLifecycle()
 
                 val snackbarHostState = remember { SnackbarHostState() }
@@ -322,11 +324,12 @@ class MainActivity : FragmentActivity() {
                 LaunchedEffect(isUnlocked) { if (!isUnlocked) scanningPairing = false }
                 LaunchedEffect(currentTab) { if (currentTab != ScreenTab.SETTINGS) viewModel.cancelPairing() }
 
-                LaunchedEffect(feedbackMessage) {
-                    feedbackMessage?.let {
+                LaunchedEffect(feedbackMessage, isUnlocked, vaultReady) {
+                    if (isUnlocked && vaultReady) feedbackMessage?.let {
                         snackbarHostState.showSnackbar(it)
                         viewModel.clearFeedback()
                     }
+                    else snackbarHostState.currentSnackbarData?.dismiss()
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -356,6 +359,13 @@ class MainActivity : FragmentActivity() {
                             hostIp = "${nodeConfig.hostIp}:${nodeConfig.port}",
                             modelMode = modelMode,
                             isRequestRunning = isStreamingResponse,
+                            lastSavedSubmission = lastSavedChatSubmission,
+                            submissionFinished = chatSubmissionFinished,
+                            snackbarHost = { SnackbarHost(snackbarHostState) },
+                            lastConnectionCheck = lastConnectionCheck,
+                            isSyncing = isSyncing,
+                            onCheckConnection = { viewModel.triggerSync() },
+                            onAskAgain = { viewModel.askAgain(it.id) },
                             onModelModeChange = { viewModel.setModelProcessingMode(it) },
                             decryptText = { viewModel.decrypt(it) },
                             decryptAttachmentBitmap = { viewModel.decryptAttachmentBitmap(it) },

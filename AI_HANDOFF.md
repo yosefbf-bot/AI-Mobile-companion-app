@@ -1,3 +1,42 @@
+# Five usability fixes — Android F1–F4, October 18–19, 2026
+
+Source base: freshly fetched authoritative main `55c09a414f30cd7641f103b2c3a86d8836a1245d`;
+branch `chatgpt/five-usability-fixes-2026-10-19`, **1.2.3-dev / versionCode 6**.
+App ID, original signer, OS authentication, encryption, existing records, pairings,
+privacy requirements, wire protocol, database schema and workflows are unchanged.
+No new package, cloud API, relay, owner installation or distribution is introduced.
+
+- Active chat mounts the protected snackbar and displays each pending/review request's
+  stored delivery error. Review-required delivery is explicitly unconfirmed.
+- Evidence saves to an encrypted Notes/Library capture with a durable identity before
+  upload. Only unchanged submitted fields clear; failed drafts and later edits remain.
+  The encrypted RAM form acknowledges that save before a possible UI disposal. Duplicate
+  taps are blocked. Feedback identifies actual pending/acknowledged/review state. Files
+  remain evidence for human review, without chat file upload or AI image interpretation.
+- Chat reuses the primary screen's check timestamp, syncing/stale badge and check callback.
+- **Ask again · new request** repeats the exact completed original phone text question
+  with a new ID, same pairing and at least its original privacy restrictions. It does
+  not rewind context. Pending/review/unknown-policy imported history is excluded.
+
+**Current local validation:** both APK builds pass; full unit suite **112/112**, zero
+failures/errors/skips, including both actual current-Core legacy and v2 bootstrap TLS
+cases. New Compose 6/6, encrypted-draft 3/3 and repository 28/28 pass. Both APKs verify
+original signer `4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd`;
+package remains `com.aistudio.privateai.kq7zwa`, version 1.2.3-dev/code 6.
+
+**Local lint was NOT EXECUTED:** automatic approval review timed out before process
+creation on the first request and its one permitted retry. This is not a lint pass
+or source failure. The coordinator will publish one review PR; mandatory hosted
+`lintDebug`, unit checks and all **nine actual API 34 device cases** must pass and
+their raw results be inspected before merge/distribution. Current-source hosted
+device execution and physical owner-phone/live-account acceptance remain unperformed.
+The previous 1.2.2 acceptance below does not accept this candidate.
+
+See [scope, retained first failures and validation](docs/FIVE_USABILITY_FIXES_2026-10-18.md).
+
+---
+Historical handoff follows unchanged.
+
 # Accepted private preview checkpoint - October 18, 2026
 
 This checkpoint supersedes historical pending/budget/failure notes below for this
