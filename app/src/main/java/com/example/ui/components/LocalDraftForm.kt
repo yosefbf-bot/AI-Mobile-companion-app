@@ -45,9 +45,12 @@ fun LocalDraftForm(controller: LocalDraftController, route: String, compact: Boo
             }
             Box(if (compact) Modifier.fillMaxWidth() else Modifier.weight(1f)) {
                 key(route, state.reset) {
-                    content(LocalDraftFormState(state.form, state.reset,
-                        { fields, evidence -> controller.update(route, state.reset, fields, evidence) },
-                        { provider -> controller.registerCapture(route, state.reset, provider) }))
+                    // An old form handle must retain its own reset epoch, rather than
+                    // reading a replacement form's reset through the delegated state.
+                    val observedReset = state.reset
+                    content(LocalDraftFormState(state.form, observedReset,
+                        { fields, evidence -> controller.update(route, observedReset, fields, evidence) },
+                        { provider -> controller.registerCapture(route, observedReset, provider) }))
                 }
             }
         }
