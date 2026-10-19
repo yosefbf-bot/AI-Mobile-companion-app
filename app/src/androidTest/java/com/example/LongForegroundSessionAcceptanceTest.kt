@@ -165,7 +165,7 @@ class LongForegroundSessionAcceptanceTest {
                         assertEquals(evidence.base64Data, restored.getString("data"))
                         val saved = reopened.getDocumentById(captureId!!).first()!!
                         assertEquals(captureId, saved.id)
-                        val payload = JSONObject(EncryptionManager.decrypt(saved.content))
+                        val payload = JSONObject(EncryptionManager.decrypt(saved.encryptedContent))
                         assertEquals(evidence.base64Data, payload.getJSONObject("localEvidence").getString("data"))
                         assertEquals("CAPTURE_PENDING", saved.fileType)
                     }
@@ -238,7 +238,7 @@ class LongForegroundSessionAcceptanceTest {
                             assertEquals(evidenceHash, EncryptionManager.computeSha256(restored.getJSONObject("evidence").getString("data")))
                             val saved = model.repository.getDocumentById(captureId!!).first()!!
                             assertEquals("CAPTURE_PENDING", saved.fileType)
-                            val body = JSONObject(EncryptionManager.decrypt(saved.content))
+                            val body = JSONObject(EncryptionManager.decrypt(saved.encryptedContent))
                             assertEquals(evidenceHash, EncryptionManager.computeSha256(body.getJSONObject("localEvidence").getString("data")))
                         }
                         captureId?.let { model.repository.deleteDocument(it) }
