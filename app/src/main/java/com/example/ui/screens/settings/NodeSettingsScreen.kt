@@ -5,6 +5,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
@@ -23,7 +26,8 @@ fun NodeSettingsScreen(
     onRequestNotificationPermission: () -> Unit = {},
     appearance: Appearance = Appearance.DARK, onAppearanceChange: (Appearance) -> Unit = {},
     pairingState: PairingUiState = PairingUiState(), onPairLink: (String) -> Unit = {},
-    onScanPairingQr: () -> Unit = {}, onCancelPairing: () -> Unit = {}
+    onScanPairingQr: () -> Unit = {}, onCancelPairing: () -> Unit = {},
+    allowScreenshots: Boolean = false, onAllowScreenshotsChange: (Boolean) -> Unit = {}
 ) {
     var pairingText by remember { mutableStateOf("") }
     DisposableEffect(Unit) { onDispose { pairingText = "" } }
@@ -127,22 +131,30 @@ fun NodeSettingsScreen(
         }
         item {
             Text("Privacy & Unlock", style = MaterialTheme.typography.titleMedium)
-            Text("Screenshots and app previews are blocked for the protected phone workspace.")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Switch(allowScreenshots, onCheckedChange = onAllowScreenshotsChange,
+                    modifier = Modifier.testTag("allow_screenshots_switch").semantics { contentDescription = "Allow screenshots" })
+                Column {
+                    Text("Allow screenshots")
+                    Text("While this workspace is unlocked, screenshots and screen sharing can include protected information. Lock and unlock screens stay protected.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
             Text("Require unlock again while actively using the app:")
             listOf("5 minutes" to "5", "10 minutes" to "10", "20 minutes" to "20", "30 minutes" to "30", "Off while active" to "off").forEach { (label, tag) ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = tag == "5", onClick = {}, enabled = tag == "5",
                         modifier = Modifier.testTag("session_mode_" + tag))
-                    Text(label)
+                    Text(label, modifier = Modifier.testTag("session_label_" + tag))
                 }
             }
             Text("Five minutes from Android authentication is the current security limit, even while you keep using the app. Longer sessions and Off need a verified protected-storage upgrade and are unavailable. Your existing keys and saved records are unchanged.", style = MaterialTheme.typography.bodySmall)
             Text("Backgrounding, phone lock, Lock now and Android security expiry can require unlock sooner. Polling and typing do not extend the session.", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Switch(secureClinicalMode, onCheckedChange = onToggleSecureClinicalMode)
+                Switch(secureClinicalMode, onCheckedChange = onToggleSecureClinicalMode,
+                    modifier = Modifier.testTag("clinical_processing_switch"))
                 Column {
                     Text("Require local-only and HIPAA-mode phone chats")
-                    Text("Adds processing restrictions to phone chat requests. Turn this off only for approved general inquiries. Desktop HIPAA, provider approval and organization policy still apply; screenshot protection stays on.", style = MaterialTheme.typography.bodySmall)
+                    Text("Adds processing restrictions to phone chat requests. Turn this off only for approved general inquiries. Desktop HIPAA, provider approval and organization policy still apply. The screenshot setting is separate.", style = MaterialTheme.typography.bodySmall)
                 }
             }
             Button(onClick = onLockVault) { Text("Lock phone workspace") }

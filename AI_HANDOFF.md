@@ -1,3 +1,73 @@
+## Isolated screenshot candidate — October 19, 2026
+
+This candidate contains the on/off **Allow screenshots** setting, default off,
+the standard Settings gear and centered existing duration rows, on top of the
+four earlier mobile usability fixes. It uses native Android window protection
+and the existing Material components; no new dependency or cloud service.
+The choice is saved locally and applies immediately to the unlocked foreground
+workspace. Turning it off restores screenshot/screen-sharing protection. Startup,
+opening/locked screens and background transitions remain protected; API33+ also
+disables recents snapshots. The choice is independent of clinical processing mode.
+
+Unfinished longer-session crypto/data changes are preserved in a different
+worktree and are excluded. The existing five-minute OS-key policy, saved data,
+pairing, signing configuration, protocol, dependencies and workflows are unchanged.
+No owner installation is replaced.
+
+The screenshot baseline previously passed six focused local tests and test-APK
+assembly. A bounded independent review found one new device-fixture defect:
+after Activity recreation the retained one-shot prompt gate needs the normal
+Unlock button. The new case now requests that retry and still performs actual
+OS-PIN authentication; its assertions and all nine original cases are retained.
+This is not an authentication bypass or a change to production prompt behavior.
+
+Fresh local CI-scope tests passed16/16. A fresh local full Gradle run is deferred
+because Windows reports about1GB free RAM; existing checkpoint passes are not
+relabelled as current integrated execution. The exact-head hosted build, unit,
+lint and all ten actual API34 device cases are required before merge. The two
+external desktop-fixture cases may be explicitly skipped in hosted unit tests,
+as before; skips are not passes. Physical owner-phone/OEM capture, screen-sharing,
+recents and installation acceptance remain unperformed.
+
+---
+Previous checkpoint follows as historical evidence.
+
+# Screenshot preference and settings polish — October 19, 2026
+
+Based on clean review head `44ceaa59cc66c0ca7b3719d78fc9c521fed546c4` and freshly
+fetched main `55c09a414f30cd7641f103b2c3a86d8836a1245d`, still **1.2.3-dev / code 6**.
+The owner requested an **Allow screenshots** setting. It defaults off and can change
+only inside the OS-unlocked, ready foreground workspace. It uses existing Android
+SharedPreferences for one nonsecret boolean, separately from clinical chat restrictions.
+Opt-in permits capture/screen sharing of unlocked content. Lock/unlock/opening surfaces
+remain secure. Creation, pause and lock synchronously set `FLAG_SECURE`; clearing uses
+live foreground/authentication/vault checks during the UI commit. API 33+ also disables
+recents snapshots explicitly. Older devices retain the synchronous secure-window
+background fallback; physical OEM screenshot/recents behavior remains unverified.
+
+Duration radio/text rows are vertically centered. The existing Dashboard Settings
+entry now uses the existing Material filled cog with the same accessible label/action.
+No session duration, five-minute lease, key, authentication, database, pairing, network,
+dependency, workflow or version change is included. Longer sessions are a separate
+design decision; the disabled unsupported choices have not been enabled here.
+
+Six new preference/actual-Compose unit cases and a tenth real OS-unlock device case
+are added; all nine existing device cases/assertions are verified unchanged. **Focused
+local tests passed 6/6, zero failures/errors/skips; offline test-APK assembly passed.**
+The first run was 5/6: only an artificial whole-Compose-root recreation fixture failed;
+its raw XML/report is retained. Keyed Settings-subtree recreation retains the persistence
+assertions and passes. This is screenshot-only checkpoint evidence; longer-session core
+and UI integration is separately in progress and will require coherent fresh checks.
+No local emulator, owner installation
+or distribution is performed. Fresh exact-source hosted lint/unit and **all ten real
+API 34 device cases** remain required. Prior failed/canceled runs do not accept this
+source, and prior-source results below are historical rather than current acceptance.
+
+See [scope and raw validation](docs/FIVE_USABILITY_FIXES_2026-10-18.md).
+
+---
+Previous `44ceaa5` checkpoint follows unchanged.
+
 # Five usability fixes — Android F1–F4, October 18–19, 2026
 
 Source base: freshly fetched authoritative main `55c09a414f30cd7641f103b2c3a86d8836a1245d`;

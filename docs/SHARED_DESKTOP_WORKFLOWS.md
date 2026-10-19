@@ -1,9 +1,53 @@
+## Isolated screenshot candidate — October 19, 2026
+
+This candidate contains the on/off **Allow screenshots** setting, default off,
+the standard Settings gear and centered existing duration rows, on top of the
+four earlier mobile usability fixes. It uses native Android window protection
+and the existing Material components; no new dependency or cloud service.
+The choice is saved locally and applies immediately to the unlocked foreground
+workspace. Turning it off restores screenshot/screen-sharing protection. Startup,
+opening/locked screens and background transitions remain protected; API33+ also
+disables recents snapshots. The choice is independent of clinical processing mode.
+
+Unfinished longer-session crypto/data changes are preserved in a different
+worktree and are excluded. The existing five-minute OS-key policy, saved data,
+pairing, signing configuration, protocol, dependencies and workflows are unchanged.
+No owner installation is replaced.
+
+The screenshot baseline previously passed six focused local tests and test-APK
+assembly. A bounded independent review found one new device-fixture defect:
+after Activity recreation the retained one-shot prompt gate needs the normal
+Unlock button. The new case now requests that retry and still performs actual
+OS-PIN authentication; its assertions and all nine original cases are retained.
+This is not an authentication bypass or a change to production prompt behavior.
+
+Fresh local CI-scope tests passed16/16. A fresh local full Gradle run is deferred
+because Windows reports about1GB free RAM; existing checkpoint passes are not
+relabelled as current integrated execution. The exact-head hosted build, unit,
+lint and all ten actual API34 device cases are required before merge. The two
+external desktop-fixture cases may be explicitly skipped in hosted unit tests,
+as before; skips are not passes. Physical owner-phone/OEM capture, screen-sharing,
+recents and installation acceptance remain unperformed.
+
+---
+Previous checkpoint follows as historical evidence.
+
 ## Android 1.2.3-dev usability candidate — October 18–19, 2026
 
-Both APK builds and the full local 112-case unit suite pass with zero skips, including
-actual legacy/v2 desktop TLS interoperability. Local lint did not execute because both
-automatic approval attempts timed out before process creation. Mandatory current hosted
-lint/unit/all nine actual API 34 device cases remain pending before merge/distribution.
+The latest follow-up adds Settings > Privacy & Unlock > **Allow screenshots**, off by
+default. It takes effect only after OS unlock while the foreground vault is ready and
+is independent of clinical processing restrictions. Screenshots/screen sharing can
+include protected information when enabled. Locked/opening screens remain blocked;
+pause/lock secures the window, and API 33+ explicitly blocks recents snapshots. Physical
+OEM capture/recents acceptance remains unverified. Duration rows are centered and the
+Dashboard Settings control uses the standard Material cog. Five-minute authentication
+and existing keys are unchanged; longer sessions remain separately under review.
+Six new unit cases and a tenth real-device case are added. Screenshot-focused tests
+passed 6/6 with zero skips and the test APK compiled offline; the first 5/6 fixture
+failure and raw corrected results are retained. Longer-session integration is separately
+in progress and still needs fresh coherent checks. Fresh exact-source hosted lint/unit,
+all ten current actual API 34 cases and any added session cases remain required. Prior 112-case local results and failed/canceled hosted
+runs are retained as earlier-source evidence, not acceptance of this follow-up.
 See [scope, exact local results and retained first failures](FIVE_USABILITY_FIXES_2026-10-18.md).
 Active chat displays protected feedback and delivery/review errors. Attachments save
 evidence notes in Notes/Library; only unchanged submitted fields clear at the durable
@@ -71,9 +115,10 @@ separate and can display only generic notices with its restricted permission.
 The phone processing preference adds Local Only and HIPAA requirements to phone
 chats. The desktop enforces those requirements during execution and controls
 provider approval independently. Turning off this extra phone preference is for
-approved general inquiries and cannot remove desktop safeguards. Screen capture
-and recent-app preview protection are separate and remain enabled throughout the
-protected app, even when this extra processing preference is off.
+approved general inquiries and cannot remove desktop safeguards. Screen capture is a separate local setting under Privacy & Unlock. It defaults blocked;
+allowing it after unlock does not change desktop processing restrictions. Lock/unlock
+screens remain protected, and backgrounding restores secure-window protection even
+when capture was allowed in the foreground.
 Queued requests retain their original privacy restrictions. A stricter setting can
 be adopted before the first attempt; after an attempt, changing the immutable
 request requires review rather than silently changing its replay identity.

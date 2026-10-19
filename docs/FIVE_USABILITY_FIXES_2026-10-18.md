@@ -1,8 +1,98 @@
+## Isolated screenshot candidate — October 19, 2026
+
+This candidate contains the on/off **Allow screenshots** setting, default off,
+the standard Settings gear and centered existing duration rows, on top of the
+four earlier mobile usability fixes. It uses native Android window protection
+and the existing Material components; no new dependency or cloud service.
+The choice is saved locally and applies immediately to the unlocked foreground
+workspace. Turning it off restores screenshot/screen-sharing protection. Startup,
+opening/locked screens and background transitions remain protected; API33+ also
+disables recents snapshots. The choice is independent of clinical processing mode.
+
+Unfinished longer-session crypto/data changes are preserved in a different
+worktree and are excluded. The existing five-minute OS-key policy, saved data,
+pairing, signing configuration, protocol, dependencies and workflows are unchanged.
+No owner installation is replaced.
+
+The screenshot baseline previously passed six focused local tests and test-APK
+assembly. A bounded independent review found one new device-fixture defect:
+after Activity recreation the retained one-shot prompt gate needs the normal
+Unlock button. The new case now requests that retry and still performs actual
+OS-PIN authentication; its assertions and all nine original cases are retained.
+This is not an authentication bypass or a change to production prompt behavior.
+
+Fresh local CI-scope tests passed16/16. A fresh local full Gradle run is deferred
+because Windows reports about1GB free RAM; existing checkpoint passes are not
+relabelled as current integrated execution. The exact-head hosted build, unit,
+lint and all ten actual API34 device cases are required before merge. The two
+external desktop-fixture cases may be explicitly skipped in hosted unit tests,
+as before; skips are not passes. Physical owner-phone/OEM capture, screen-sharing,
+recents and installation acceptance remain unperformed.
+
+---
+Previous checkpoint follows as historical evidence.
+
 # Android F1–F4 usability candidate — October 18–19, 2026
 
 Base: freshly fetched main `55c09a414f30cd7641f103b2c3a86d8836a1245d`.
 Branch: `chatgpt/five-usability-fixes-2026-10-19`; version `1.2.3-dev` / code `6`.
 This document describes Android; desktop F5 is coordinated separately.
+
+## Owner-requested screenshot preference and settings polish
+
+Follow-up to clean `44ceaa59cc66c0ca7b3719d78fc9c521fed546c4`; main freshly verified
+at `55c09a414f30cd7641f103b2c3a86d8836a1245d`. The version stays 1.2.3-dev/code 6.
+**Allow screenshots** is a default-off, nonsecret local display preference in Privacy &
+Unlock, independently of clinical processing policy. Only an actually authenticated,
+ready foreground workspace can change it or clear `FLAG_SECURE`. Every attempted clear
+rechecks live activity foreground, Android-authenticated access and vault readiness.
+The preference callback and authorization check share the existing encryption monitor
+for a bounded nonsecret settings write, without crypto/network work. Composition uses
+observable foreground state and synchronous `DisposableEffect`, whose disposal secures
+the window. Creation, pause and explicit lock protect synchronously. API 33+ also sets
+[`setRecentsScreenshotEnabled(false)`](https://developer.android.com/reference/android/app/Activity#setRecentsScreenshotEnabled(boolean));
+older versions retain the pause/lock secure-window
+fallback. No background capture or permission is added. Opt-in can expose screenshots
+and screen sharing of unlocked protected information. Physical OEM/recents enforcement
+still needs separate acceptance.
+
+The duration radio/text rows are centered; their selection/timeout behavior is unchanged.
+The existing Dashboard Settings entry uses Material's filled Settings cog, preserving its
+action, test tag and accessible label. Existing AndroidX Compose/Material components
+(Apache 2.0, [official AndroidX source](https://github.com/androidx/androidx) inspected) and the app's
+SharedPreferences mechanism are reused; no new package/assets/cloud service is needed.
+No session/key/lease, protocol, record, pairing, dependency, workflow or version changes
+are included. Longer unlock sessions remain a separately reviewed design decision.
+
+New regressions: `ScreenCapturePreferencesTest` has three cases for default blocking,
+persisted independent choice, and malformed-value fail-closed behavior;
+`PrivacySettingsCompositionTest` has three actual Compose cases for switch/recreation,
+independent clinical controls, and measured radio/label centering without enabling
+unsupported durations. One tenth instrumented case requires real OS unlock, verifies
+default blocking, rejection of a locked stale callback, both switch directions, retained
+choice across Activity recreation, protected lock/startup/background, and capture only
+after actual unlock. The prior nine cases/assertions are retained. It uses account-free
+data and resets only the disposable fixture preference. Window-flag checks on a hosted
+emulator do not establish physical OEM capture acceptance.
+
+**Screenshot-only local checkpoint:** focused new tests **6/6 passed**, zero failures,
+errors or skips; `assembleDebugAndroidTest` **passed offline**, 55 seconds, 55 tasks
+(5 executed / 50 up-to-date). The first focused run was **5 passed / 1 failed**: after
+successfully persisting the switch, the test removed its whole Compose root and could
+not find the re-added Settings node. The fixture now recreates the keyed Settings
+subtree, discarding its remembered state while retaining the host and the same persisted
+on/off assertions. Its original XML/report and corrected 6/6 XML remain retained.
+The actual-device test still requires real Activity recreation; it has not run locally.
+The test APK SHA256 is `695f6b19bf1e6b706c10a5b1ce47c0455dd4c0efb194ca6c2f98686a54de9388`,
+verified generated-debug signer `c22024dda78abdc376b87e518360e2f50c39021ceca7ab1a05d6100cee288c80`.
+This fixture is not an owner upgrade payload. The retained original-signer production
+APK remains earlier-source evidence, with no installation or signing change.
+Longer-session core/UI integration is separately in progress, so these six passes and
+this compile do not accept that combined source. Fresh hosted lint/unit plus all ten
+current actual API 34 cases (and any additional session cases) remain required before merge/distribution.
+No local emulator/owner installation is performed. Evidence will be retained in ignored
+`app/build/android5-screenshot-2026-10-19/`; older failure/compile receipts stay intact.
+The previous nine-case failed/canceled run does not accept this screenshot source.
 
 ## Behavior
 

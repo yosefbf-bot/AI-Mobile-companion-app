@@ -19,6 +19,9 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+import com.example.ui.ScreenCapturePreferences
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.semantics.getOrNull
 import com.example.data.model.ChatAttachment
@@ -310,6 +313,103 @@ class OsCredentialKeystoreAcceptanceTest {
                 database.chatDao().deleteMessagesForSession(sessionId)
                 database.chatDao().deleteSession(sessionId)
             }
+            EncryptionManager.lock()
+        }
+    }
+
+    @Test fun screenshotChoiceRequiresActualUnlockAndRelocksAcrossRecreationAndBackground() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
+        assumeTrue("A disposable emulator OS credential must be explicitly supplied.", !pin.isNullOrBlank())
+        val device = UiDevice.getInstance(instrumentation)
+        val preferences = ScreenCapturePreferences(instrumentation.targetContext)
+        fun assertSecure(expected: Boolean) {
+            rule.waitUntil(10_000) {
+                var secure = false
+                rule.activityRule.scenario.onActivity { secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0 }
+                secure == expected
+            }
+            rule.activityRule.scenario.onActivity {
+                assertEquals(expected, it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+            }
+        }
+        fun unlock(retry: Boolean = false) {
+            if (retry) rule.onNodeWithTag("unlock_biometric_button").performClick()
+            val entry = credentialField(device)
+            assertNotNull("Capture allowance requires actual Android authentication.", entry)
+            entry!!.text = pin!!
+            device.pressEnter()
+            rule.waitUntil(20_000) { EncryptionManager.hasCurrentAccess() }
+            lateinit var model: MainViewModel
+            rule.activityRule.scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
+            rule.waitUntil(20_000) { model.vaultReady.value }
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+        }
+        fun showPrivacy() {
+            rule.onNodeWithTag("nav_home").performClick()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("settings_icon_button").isDisplayed() }
+            rule.onNodeWithTag("settings_icon_button").performClick()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("node_settings_screen").isDisplayed() }
+            rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+        }
+        try {
+            phase = "screenshots: startup blocks capture and rejects a stale locked callback"
+            assertFalse("Fresh disposable fixture must default to blocked capture.", preferences.readAllowed())
+            assertSecure(true)
+            // Invoke the real guarded callback while locked; this does not unlock anything.
+            rule.activityRule.scenario.onActivity {
+                MainActivity::class.java.getDeclaredMethod("updateAllowScreenshots", Boolean::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(it, true)
+            }
+            assertFalse(preferences.readAllowed())
+            rule.onNodeWithTag("allow_screenshots_switch").assertDoesNotExist()
+            unlock()
+            assertSecure(true)
+            showPrivacy()
+            rule.onNodeWithTag("allow_screenshots_switch").assertIsOff().performClick()
+            rule.waitUntil(10_000) { preferences.readAllowed() }
+            assertSecure(false)
+
+            phase = "screenshots: persisted allowance cannot expose recreated lock UI"
+            rule.activityRule.scenario.recreate()
+            rule.waitUntil(10_000) { !EncryptionManager.hasCurrentAccess() }
+            assertTrue(preferences.readAllowed())
+            assertSecure(true)
+            // Recreation retains the one-shot prompt gate; request the normal retry.
+            unlock(retry = true)
+            assertSecure(false)
+            showPrivacy()
+            rule.onNodeWithTag("allow_screenshots_switch").assertIsOn().performClick()
+            rule.waitUntil(10_000) { !preferences.readAllowed() }
+            assertSecure(true)
+            rule.onNodeWithTag("allow_screenshots_switch").assertIsOff().performClick()
+            rule.waitUntil(10_000) { preferences.readAllowed() }
+            assertSecure(false)
+
+            phase = "screenshots: direct lock restores protection with allowance retained"
+            EncryptionManager.lock()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
+            assertSecure(true)
+            rule.onNodeWithTag("allow_screenshots_switch").assertDoesNotExist()
+            assertTrue(preferences.readAllowed())
+            unlock(retry = true)
+            assertSecure(false)
+
+            phase = "screenshots: background and return stay secure before fresh authentication"
+            device.pressHome()
+            rule.waitUntil(10_000) { !EncryptionManager.hasCurrentAccess() }
+            assertSecure(true)
+            returnFromHome()
+            assertSecure(true)
+        } catch (failure: Throwable) {
+            Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
+            throw failure
+        } finally {
+            // Only this disposable fixture's nonsecret preference is reset.
+            preferences.saveAllowed(false)
             EncryptionManager.lock()
         }
     }

@@ -1,0 +1,109 @@
+package com.example
+
+import android.content.Context
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.test.core.app.ApplicationProvider
+import com.example.data.model.ConnectionStatus
+import com.example.data.model.DesktopNodeConfig
+import com.example.ui.ScreenCapturePreferences
+import com.example.ui.screens.settings.NodeSettingsScreen
+import com.example.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.test.StandardTestDispatcher
+import org.junit.After
+import org.junit.Before
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/** Actual settings interactions and layout; no production vault-unlock substitute. */
+@OptIn(ExperimentalTestApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], qualifiers = "w480dp-h900dp")
+class PrivacySettingsCompositionTest {
+    @get:Rule val rule = createComposeRule(effectContext = StandardTestDispatcher())
+    private val context = ApplicationProvider.getApplicationContext<Context>()
+    private val preferences = ScreenCapturePreferences(context)
+    private val visible = mutableStateOf(true)
+    private val settingsGeneration = mutableStateOf(0)
+    private val clinical = mutableStateOf(true)
+    private var clinicalChanges = 0
+
+    @Before fun setUp() {
+        context.getSharedPreferences("screen_capture", Context.MODE_PRIVATE).edit().clear().commit()
+        rule.mainClock.autoAdvance = false
+    }
+    private fun frame() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
+    @After fun disposeAndClearFixture() {
+        rule.runOnIdle { visible.value = false }
+        frame()
+        context.getSharedPreferences("screen_capture", Context.MODE_PRIVATE).edit().clear().commit()
+    }
+    private fun render() {
+        rule.setContent {
+            MyApplicationTheme {
+                if (visible.value) key(settingsGeneration.value) {
+                    var allowed by remember { mutableStateOf(preferences.readAllowed()) }
+                    NodeSettingsScreen(DesktopNodeConfig(), ConnectionStatus.DISCONNECTED, clinical.value,
+                        onSaveConfig = {}, onToggleSecureClinicalMode = { clinical.value = it; clinicalChanges++ },
+                        onTestConnection = {}, onLockVault = {}, allowScreenshots = allowed,
+                        onAllowScreenshotsChange = { preferences.saveAllowed(it); allowed = it })
+                }
+            }
+        }
+        frame()
+        showPrivacy()
+    }
+    private fun showPrivacy() {
+        rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
+        frame()
+    }
+
+    @Test fun screenshotChoiceStartsOffAndSurvivesSettingsRecreation() {
+        render()
+        rule.onNodeWithTag("allow_screenshots_switch").assertIsOff().performClick()
+        frame()
+        assertTrue(preferences.readAllowed())
+        // Recreate the settings subtree, including all remember state, within the live test host.
+        rule.runOnIdle { settingsGeneration.value++ }
+        frame()
+        showPrivacy()
+        rule.onNodeWithTag("allow_screenshots_switch").assertIsOn().performClick()
+        frame()
+        assertFalse(preferences.readAllowed())
+    }
+
+    @Test fun screenshotAndClinicalProcessingControlsAreIndependent() {
+        render()
+        rule.onNodeWithTag("allow_screenshots_switch").performClick()
+        frame()
+        assertTrue(clinical.value)
+        assertEquals(0, clinicalChanges)
+        rule.onNodeWithTag("clinical_processing_switch").performScrollTo().assertIsOn().performClick()
+        frame()
+        assertFalse(clinical.value)
+        assertEquals(1, clinicalChanges)
+        assertTrue(preferences.readAllowed())
+        showPrivacy()
+        rule.onNodeWithTag("allow_screenshots_switch").assertIsOn()
+    }
+
+    @Test fun durationRadioAndLabelCentersAlignWithoutEnablingUnsupportedSessions() {
+        render()
+        val radio = rule.onNodeWithTag("session_mode_5").assertIsSelected().fetchSemanticsNode().boundsInRoot
+        val label = rule.onNodeWithTag("session_label_5").fetchSemanticsNode().boundsInRoot
+        assertEquals(radio.center.y, label.center.y, 1f)
+        rule.onNodeWithTag("session_mode_10").assertIsNotEnabled().performClick()
+        frame()
+        rule.onNodeWithTag("session_mode_5").assertIsSelected()
+        rule.onNodeWithTag("session_mode_10").assertIsNotSelected()
+    }
+}
