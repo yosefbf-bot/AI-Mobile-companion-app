@@ -17,6 +17,14 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+import com.example.ui.ScreenCapturePreferences
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.semantics.getOrNull
+import com.example.data.model.ChatAttachment
 import androidx.compose.ui.test.assertTextContains
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -39,6 +47,7 @@ import org.junit.Assume.assumeTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Rule
 import org.junit.Test
@@ -222,6 +231,192 @@ class OsCredentialKeystoreAcceptanceTest {
             throw failure
         } finally {
             runBlocking { dao.deleteMessagesForSession(sessionId); dao.deleteSession(sessionId) }
+            EncryptionManager.lock()
+        }
+    }
+
+    @Test fun actualOsUnlockChatEvidenceSaveShowsFeedbackAndClearsOnlyDurablySavedDraft() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
+        assumeTrue("A disposable emulator OS credential must be explicitly supplied.", !pin.isNullOrBlank())
+        val device = UiDevice.getInstance(instrumentation)
+        val database = AppDatabase.getInstance(instrumentation.targetContext)
+        val sessionId = "synthetic-chat-evidence-save"
+        lateinit var model: MainViewModel
+        var captureId: String? = null
+        val feedback = "Evidence note saved on this phone in Notes/Library; pending desktop delivery and review. Image contents were not interpreted."
+        try {
+            phase = "chat evidence: actual OS authentication"
+            val entry = credentialField(device)
+            assertNotNull("Saving chat evidence requires real OS authentication.", entry)
+            entry!!.text = pin!!
+            device.pressEnter()
+            rule.waitUntil(20_000) { EncryptionManager.hasCurrentAccess() }
+            rule.activityRule.scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
+            rule.waitUntil(20_000) { model.vaultReady.value }
+            assertFalse("This disposable-device case must remain unpaired and account-free.", model.nodeConfig.value.isPaired)
+            runBlocking { database.chatDao().insertSession(VaultRecords.encode(
+                EncryptedChatSession(sessionId, "Synthetic chat evidence"), EncryptionManager)) }
+            rule.waitUntil(20_000) { rule.onNodeWithTag("chat_session_item_$sessionId").isDisplayed() }
+            rule.onNodeWithTag("chat_session_item_$sessionId").performClick()
+            rule.waitUntil(20_000) { rule.onNodeWithTag("chat_message_input").isDisplayed() }
+            rule.activityRule.scenario.onActivity {
+                model.acceptPendingEvidence("chat:$sessionId", ChatAttachment("synthetic.txt", "DOCUMENT", "c3ludGhldGlj", 9))
+            }
+            rule.waitUntil(10_000) { rule.onNodeWithTag("attachment_preview_card").isDisplayed() }
+            rule.onNodeWithTag("chat_message_input").performTextInput("Synthetic evidence note")
+            phase = "chat evidence: durable offline save and visible feedback"
+            rule.onNodeWithTag("chat_send_button").performClick()
+            rule.waitUntil(10_000) { model.lastSavedChatSubmission.value != null && !model.isStreamingResponse.value }
+            captureId = model.lastSavedChatSubmission.value!!.id
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+            rule.onNodeWithText(feedback).assertIsDisplayed()
+            rule.onNodeWithTag("attachment_preview_card").assertDoesNotExist()
+            val input = rule.onNodeWithTag("chat_message_input")
+            val emptyEditableText = androidx.compose.ui.test.SemanticsMatcher("EditableText.text is exactly empty") {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.EditableText)?.text == ""
+            }
+            rule.waitUntil(10_000) { emptyEditableText.matches(input.fetchSemanticsNode()) }
+            input.assert(emptyEditableText)
+            rule.onNodeWithTag("chat_send_button").assertIsNotEnabled()
+            val document = runBlocking { model.repository.documents.first().single { it.id == captureId } }
+            assertEquals("CAPTURE_PENDING", document.fileType)
+            val payload = org.json.JSONObject(EncryptionManager.decrypt(document.encryptedContent))
+            assertEquals("Synthetic evidence note", payload.getString("text"))
+            assertEquals("c3ludGhldGlj", payload.getJSONObject("localEvidence").getString("data"))
+            assertTrue(runBlocking { database.chatDao().getMessagesForSession(sessionId).first().isEmpty() })
+
+            phase = "chat evidence: failed local submission retains draft with chat feedback"
+            val failedDraft = "x".repeat(12001)
+            rule.onNodeWithTag("chat_message_input").performTextReplacement(failedDraft)
+            rule.onNodeWithTag("chat_send_button").performClick()
+            val failure = "This message is too long for the desktop. Send shorter sections of up to 12,000 characters."
+            rule.waitUntil(10_000) { model.chatSubmissionFinished.value >= 2 }
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+            rule.onNodeWithText(failure).assertIsDisplayed()
+            rule.onNodeWithTag("chat_message_input").assertTextContains(failedDraft)
+            rule.onNodeWithTag("chat_send_button").assertIsEnabled()
+            assertEquals(1, runBlocking { model.repository.documents.first().count { it.id == captureId } })
+            assertTrue(runBlocking { database.chatDao().getMessagesForSession(sessionId).first().isEmpty() })
+            EncryptionManager.lock()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
+            rule.onNodeWithText(failure).assertDoesNotExist()
+            rule.onNodeWithTag("chat_detail_screen").assertDoesNotExist()
+        } catch (failure: Throwable) {
+            Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
+            throw failure
+        } finally {
+            runBlocking {
+                captureId?.let { database.documentDao().deleteDocument(it) }
+                database.chatDao().deleteMessagesForSession(sessionId)
+                database.chatDao().deleteSession(sessionId)
+            }
+            EncryptionManager.lock()
+        }
+    }
+
+    @Test fun screenshotChoiceRequiresActualUnlockAndRelocksAcrossRecreationAndBackground() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
+        assumeTrue("A disposable emulator OS credential must be explicitly supplied.", !pin.isNullOrBlank())
+        val device = UiDevice.getInstance(instrumentation)
+        val preferences = ScreenCapturePreferences(instrumentation.targetContext)
+        fun assertSecure(expected: Boolean) {
+            rule.waitUntil(10_000) {
+                var secure = false
+                rule.activityRule.scenario.onActivity { secure = it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0 }
+                secure == expected
+            }
+            rule.activityRule.scenario.onActivity {
+                assertEquals(expected, it.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+            }
+        }
+        fun unlock(retry: Boolean = false) {
+            if (retry) rule.onNodeWithTag("unlock_biometric_button").performClick()
+            val entry = credentialField(device)
+            assertNotNull("Capture allowance requires actual Android authentication.", entry)
+            entry!!.text = pin!!
+            device.pressEnter()
+            rule.waitUntil(20_000) { EncryptionManager.hasCurrentAccess() }
+            lateinit var model: MainViewModel
+            rule.activityRule.scenario.onActivity { model = ViewModelProvider(it)[MainViewModel::class.java] }
+            rule.waitUntil(20_000) { model.vaultReady.value }
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+        }
+        fun showPrivacy() {
+            rule.onNodeWithTag("nav_home").performClick()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("settings_icon_button").isDisplayed() }
+            rule.onNodeWithTag("settings_icon_button").performClick()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("node_settings_screen").isDisplayed() }
+            rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
+            rule.mainClock.advanceTimeBy(300)
+            rule.waitForIdle()
+        }
+        try {
+            phase = "screenshots: startup blocks capture and rejects a stale locked callback"
+            assertFalse("Fresh disposable fixture must default to blocked capture.", preferences.readAllowed())
+            assertSecure(true)
+            // Invoke the real guarded callback while locked; this does not unlock anything.
+            rule.activityRule.scenario.onActivity {
+                MainActivity::class.java.getDeclaredMethod("updateAllowScreenshots", Boolean::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(it, true)
+            }
+            assertFalse(preferences.readAllowed())
+            rule.onNodeWithTag("allow_screenshots_switch").assertDoesNotExist()
+            unlock()
+            assertSecure(true)
+            showPrivacy()
+            rule.onNodeWithTag("allow_screenshots_switch").assertIsOff().performClick()
+            rule.waitUntil(10_000) { preferences.readAllowed() }
+            assertSecure(false)
+
+            phase = "screenshots: persisted allowance cannot expose recreated lock UI"
+            rule.activityRule.scenario.recreate()
+            rule.waitUntil(10_000) { !EncryptionManager.hasCurrentAccess() }
+            assertTrue(preferences.readAllowed())
+            assertSecure(true)
+            // Recreation retains the one-shot prompt gate; request the normal retry.
+            unlock(retry = true)
+            assertSecure(false)
+            showPrivacy()
+            rule.onNodeWithTag("allow_screenshots_switch").assertIsOn().performClick()
+            rule.waitUntil(10_000) { !preferences.readAllowed() }
+            assertSecure(true)
+            rule.onNodeWithTag("allow_screenshots_switch").assertIsOff().performClick()
+            rule.waitUntil(10_000) { preferences.readAllowed() }
+            assertSecure(false)
+
+            phase = "screenshots: direct lock restores protection with allowance retained"
+            EncryptionManager.lock()
+            rule.waitUntil(10_000) { rule.onNodeWithTag("biometric_lock_card").isDisplayed() }
+            assertSecure(true)
+            rule.onNodeWithTag("allow_screenshots_switch").assertDoesNotExist()
+            assertTrue(preferences.readAllowed())
+            unlock(retry = true)
+            assertSecure(false)
+
+            phase = "screenshots: background and return stay secure before fresh authentication"
+            assertTrue("Home must reach the real launcher.", device.pressHome())
+            rule.waitUntil(10_000) { rule.activityRule.scenario.state == Lifecycle.State.CREATED }
+            rule.waitUntil(10_000) { !EncryptionManager.hasCurrentAccess() }
+            assertSecure(true)
+            // Home was already pressed and the real stop observed; do not press it twice.
+            val launchIntent = instrumentation.targetContext.packageManager
+                .getLaunchIntentForPackage(instrumentation.targetContext.packageName)
+            assertNotNull("The existing app launch intent must be available.", launchIntent)
+            instrumentation.targetContext.startActivity(launchIntent!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertNotNull("Returning must require real Android authentication.", credentialField(device))
+            assertFalse("Returning must remain locked before the credential is entered.", EncryptionManager.hasCurrentAccess())
+            assertSecure(true)
+        } catch (failure: Throwable) {
+            Log.e("PrivateAIAcceptance", "Failed at $phase", failure)
+            throw failure
+        } finally {
+            // Only this disposable fixture's nonsecret preference is reset.
+            preferences.saveAllowed(false)
             EncryptionManager.lock()
         }
     }

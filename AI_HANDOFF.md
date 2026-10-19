@@ -1,3 +1,138 @@
+## Screenshot device-fixture follow-up — October 19, 2026
+
+Run39305305505 atc44fe16:116 hosted unit passes, two named unavailable desktop-fixture
+skips, no unit failures; lint0errors/77warnings. Actual Android:9passed/1failed/0skipped.
+Only the new screenshot case failed: it pressed Home, observed lock/protection, then
+called a helper that pressed Home again. The second command returned false at line433.
+All preceding screenshot on/off, persistence, recreation, lock and background-protection
+assertions passed; this is not a confirmed application defect. Raw first evidence is retained.
+The new case now asserts the first Home, observes actual stopped state, relaunches via
+the normal package intent, and requires the actual Android credential prompt, continued
+locked access and secure window. Production code and all nine prior cases/helper remain
+unchanged. Fresh exact-head full checks/all ten device cases remain required; no merge
+or owner installation is accepted from the failed run.
+
+## Isolated screenshot candidate — October 19, 2026
+
+This candidate contains the on/off **Allow screenshots** setting, default off,
+the standard Settings gear and centered existing duration rows, on top of the
+four earlier mobile usability fixes. It uses native Android window protection
+and the existing Material components; no new dependency or cloud service.
+The choice is saved locally and applies immediately to the unlocked foreground
+workspace. Turning it off restores screenshot/screen-sharing protection. Startup,
+opening/locked screens and background transitions remain protected; API33+ also
+disables recents snapshots. The choice is independent of clinical processing mode.
+
+Unfinished longer-session crypto/data changes are preserved in a different
+worktree and are excluded. The existing five-minute OS-key policy, saved data,
+pairing, signing configuration, protocol, dependencies and workflows are unchanged.
+No owner installation is replaced.
+
+The screenshot baseline previously passed six focused local tests and test-APK
+assembly. A bounded independent review found one new device-fixture defect:
+after Activity recreation the retained one-shot prompt gate needs the normal
+Unlock button. The new case now requests that retry and still performs actual
+OS-PIN authentication; its assertions and all nine original cases are retained.
+This is not an authentication bypass or a change to production prompt behavior.
+
+Fresh local CI-scope tests passed16/16. A fresh local full Gradle run is deferred
+because Windows reports about1GB free RAM; existing checkpoint passes are not
+relabelled as current integrated execution. The exact-head hosted build, unit,
+lint and all ten actual API34 device cases are required before merge. The two
+external desktop-fixture cases may be explicitly skipped in hosted unit tests,
+as before; skips are not passes. Physical owner-phone/OEM capture, screen-sharing,
+recents and installation acceptance remain unperformed.
+
+---
+Previous checkpoint follows as historical evidence.
+
+# Screenshot preference and settings polish — October 19, 2026
+
+Based on clean review head `44ceaa59cc66c0ca7b3719d78fc9c521fed546c4` and freshly
+fetched main `55c09a414f30cd7641f103b2c3a86d8836a1245d`, still **1.2.3-dev / code 6**.
+The owner requested an **Allow screenshots** setting. It defaults off and can change
+only inside the OS-unlocked, ready foreground workspace. It uses existing Android
+SharedPreferences for one nonsecret boolean, separately from clinical chat restrictions.
+Opt-in permits capture/screen sharing of unlocked content. Lock/unlock/opening surfaces
+remain secure. Creation, pause and lock synchronously set `FLAG_SECURE`; clearing uses
+live foreground/authentication/vault checks during the UI commit. API 33+ also disables
+recents snapshots explicitly. Older devices retain the synchronous secure-window
+background fallback; physical OEM screenshot/recents behavior remains unverified.
+
+Duration radio/text rows are vertically centered. The existing Dashboard Settings
+entry now uses the existing Material filled cog with the same accessible label/action.
+No session duration, five-minute lease, key, authentication, database, pairing, network,
+dependency, workflow or version change is included. Longer sessions are a separate
+design decision; the disabled unsupported choices have not been enabled here.
+
+Six new preference/actual-Compose unit cases and a tenth real OS-unlock device case
+are added; all nine existing device cases/assertions are verified unchanged. **Focused
+local tests passed 6/6, zero failures/errors/skips; offline test-APK assembly passed.**
+The first run was 5/6: only an artificial whole-Compose-root recreation fixture failed;
+its raw XML/report is retained. Keyed Settings-subtree recreation retains the persistence
+assertions and passes. This is screenshot-only checkpoint evidence; longer-session core
+and UI integration is separately in progress and will require coherent fresh checks.
+No local emulator, owner installation
+or distribution is performed. Fresh exact-source hosted lint/unit and **all ten real
+API 34 device cases** remain required. Prior failed/canceled runs do not accept this
+source, and prior-source results below are historical rather than current acceptance.
+
+See [scope and raw validation](docs/FIVE_USABILITY_FIXES_2026-10-18.md).
+
+---
+Previous `44ceaa5` checkpoint follows unchanged.
+
+# Five usability fixes — Android F1–F4, October 18–19, 2026
+
+Source base: freshly fetched authoritative main `55c09a414f30cd7641f103b2c3a86d8836a1245d`;
+branch `chatgpt/five-usability-fixes-2026-10-19`, **1.2.3-dev / versionCode 6**.
+App ID, original signer, OS authentication, encryption, existing records, pairings,
+privacy requirements, wire protocol, database schema and workflows are unchanged.
+No new package, cloud API, relay, owner installation or distribution is introduced.
+
+- Active chat mounts the protected snackbar and displays each pending/review request's
+  stored delivery error. Review-required delivery is explicitly unconfirmed.
+- Evidence saves to an encrypted Notes/Library capture with a durable identity before
+  upload. Only unchanged submitted fields clear; failed drafts and later edits remain.
+  The encrypted RAM form acknowledges that save before a possible UI disposal. Duplicate
+  taps are blocked. Feedback identifies actual pending/acknowledged/review state. Files
+  remain evidence for human review, without chat file upload or AI image interpretation.
+- Chat reuses the primary screen's check timestamp, syncing/stale badge and check callback.
+- **Ask again · new request** repeats the exact completed original phone text question
+  with a new ID, same pairing and at least its original privacy restrictions. It does
+  not rewind context. Pending/review/unknown-policy imported history is excluded.
+
+**Baseline local validation (source `217718d`):** both APK builds pass; full unit suite **112/112**, zero
+failures/errors/skips, including both actual current-Core legacy and v2 bootstrap TLS
+cases. New Compose 6/6, encrypted-draft 3/3 and repository 28/28 pass. Both APKs verify
+original signer `4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd`;
+package remains `com.aistudio.privateai.kq7zwa`, version 1.2.3-dev/code 6.
+
+**Hosted PR #10 run `39244077514` at source `217718d` failed:** unit XML records
+112 tests: 110 passed, 0 failures/errors and 2 external-Core-fixture skips. Hosted lint
+completed with 0 errors and 76 warnings. Actual API 34 device XML records 9 tests:
+8 passed, 1 failed, 0 errors/skips. The new chat evidence case failed at line 272 on
+full `AnnotatedString` equality although its dump printed empty `EditableText`;
+the earlier feedback and evidence-removal assertions passed. Preserve this raw failure.
+
+The follow-up changes only that instrumented assertion and these validation notes.
+It waits at most 10 seconds for exact `EditableText.text == ""`, then explicitly asserts
+the same value; an absent property or whitespace fails. Compose 1.7.2 equality also
+compares styles/annotations while its printed string contains only text. The runtime
+metadata difference was not captured, and a scheduling contribution is not excluded.
+All receipt, feedback, evidence, disabled-send, encrypted-record, failed-draft and real
+OS-lock assertions remain. Local corrected test-APK assembly **passed offline** (one worker, no device execution). Fresh full
+**nine-case actual-device validation is pending** before merge/distribution; compile
+success cannot accept device behavior. Production code and unreleased 1.2.3-dev/code 6
+are unchanged. Local lint had not executed due two approval-review startup timeouts;
+the hosted lint result above is an actual execution for `217718d`. Physical owner-phone
+and live-account acceptance remain unperformed. Prior 1.2.2 results do not accept this candidate.
+
+See [scope, retained first failures and validation](docs/FIVE_USABILITY_FIXES_2026-10-18.md).
+
+---
+Historical handoff follows unchanged.
+
 # Accepted private preview checkpoint - October 18, 2026
 
 This checkpoint supersedes historical pending/budget/failure notes below for this

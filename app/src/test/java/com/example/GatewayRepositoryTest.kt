@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.crypto.*
 import com.example.data.local.AppDatabase
+import com.example.data.local.entity.EncryptedChatMessage
 import com.example.data.model.*
 import com.example.data.network.*
 import com.example.data.repository.PrivateAIRepository
@@ -381,6 +382,99 @@ class GatewayRepositoryTest {
         assertTrue(repository.triggerSync().success)
         assertEquals(0,conversationReads.get())
         assertTrue(actionReads.get() > 0)
+    }
+
+    @Test fun chatEvidenceReturnsDurableCaptureIdentityBeforeAnyUploadAndRetainsItForRetry() = runBlocking {
+        allowStatus = false
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC evidence from chat")
+        val attachment = ChatAttachment("synthetic.txt", "DOCUMENT", "c3ludGhldGlj", 9)
+        var saved: ChatSubmissionReceipt? = null
+        val receipt = repository.sendMessage(session, "SYNTHETIC exact evidence note", attachment) { saved = it }
+        assertEquals(receipt, saved)
+        assertTrue(receipt.evidenceNote)
+        assertEquals(session, receipt.sessionId)
+        assertEquals("CAPTURE_PENDING", receipt.status)
+        val stored = repository.documents.first().single { it.id == receipt.id }
+        val payload = JSONObject(cipher.decrypt(stored.encryptedContent))
+        assertEquals(receipt.id, payload.getString("sourceId"))
+        assertEquals("SYNTHETIC exact evidence note", payload.getString("text"))
+        assertEquals(attachment.base64Data, payload.getJSONObject("localEvidence").getString("data"))
+        assertTrue(repository.getMessagesForSession(session).first().isEmpty())
+        assertEquals(0, chatRequests.get())
+        assertEquals(0, evidenceRequests.get())
+        allowStatus = true
+        assertTrue(repository.triggerSync().success)
+        assertEquals(receipt.id, captureRequests.single().getString("sourceId"))
+        assertEquals("CAPTURE_RECEIPT", repository.documents.first().single { it.id == receipt.id }.fileType)
+    }
+
+    @Test fun chatEvidenceLocalReceiptPrecedesNetworkAndReportsAcknowledgedCaptureDespiteMetadataFailure() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC durable save receipt")
+        allowActionReads = false
+        val locallySaved = AtomicBoolean(false)
+        beforeEvidenceResponse = { assertTrue("The composer must know the local commit before any upload response.", locallySaved.get()) }
+        var saved: ChatSubmissionReceipt? = null
+        val receipt = repository.sendMessage(session, "SYNTHETIC evidence note", ChatAttachment("synthetic.txt", "DOCUMENT", "c3ludGhldGlj", 9)) {
+            saved = it; locallySaved.set(true)
+        }
+        assertEquals(receipt.id, saved!!.id)
+        assertEquals("CAPTURE_PENDING", saved!!.status)
+        assertEquals("CAPTURE_RECEIPT", receipt.status)
+        assertTrue(repository.lastError.value!!.contains("Note saved on this phone"))
+        assertEquals(1, captureRequests.size)
+        assertEquals(0, chatRequests.get())
+    }
+
+    @Test fun failedEvidenceValidationProducesNoDurableReceiptAndNoQueueEntry() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC rejected draft")
+        var saved: ChatSubmissionReceipt? = null
+        try {
+            repository.sendMessage(session, "x".repeat(12001), ChatAttachment("synthetic.txt", "DOCUMENT", "c3ludGhldGlj", 9)) { saved = it }
+            fail("An oversized note must fail before saving, without truncation.")
+        } catch (_: IllegalArgumentException) {}
+        assertNull(saved)
+        assertTrue(repository.documents.first().isEmpty())
+        assertEquals(0, captureRequests.size)
+    }
+
+    @Test fun askAgainCreatesNewIdentityWithFullOriginalQuestionAndMinimumOriginalPrivacy() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC ask again")
+        val question = "Q".repeat(12000)
+        val first = repository.sendMessage(session, question)
+        // A long assistant result must never become the next prompt.
+        database.chatDao().insertMessage(VaultRecords.encode(EncryptedChatMessage("reply-${first.id}", session, "assistant",
+            cipher.encrypt("A".repeat(12050)), status = "SYNCED_DESKTOP"), cipher))
+        repository.setSecureClinicalMode(false).join()
+        val repeated = repository.askAgain(session, first.id)
+        assertNotEquals(first.id, repeated.id)
+        assertEquals("SYNCED_DESKTOP", repeated.status)
+        assertEquals(2, requests.size)
+        assertEquals(question, requests[1].getString("prompt"))
+        assertTrue(requests[1].getBoolean("requireLocal"))
+        assertTrue(requests[1].getBoolean("requireHipaa"))
+        assertNotEquals(requests[0].getString("requestId"), requests[1].getString("requestId"))
+        assertEquals(PairingConfigParser.destinationIdentity(config), database.chatDao().messageById(repeated.id)!!.desktopFingerprint)
+    }
+
+    @Test fun askAgainRejectsUncertainDeliveryUnknownPairingAndOversizedOriginalWithoutNewRequests() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC no unsafe repeat")
+        val original = EncryptedChatMessage("original", session, "user", cipher.encrypt("SYNTHETIC question"),
+            status = "REVIEW_REQUIRED", desktopFingerprint = PairingConfigParser.destinationIdentity(config))
+        val invalid = listOf(original, original.copy(status = "SYNCED_DESKTOP", desktopFingerprint = null),
+            original.copy(status = "SYNCED_DESKTOP", desktopFingerprint = "different-pairing"),
+            original.copy(status = "SYNCED_DESKTOP", encryptedContent = cipher.encrypt("x".repeat(12001))))
+        for (row in invalid) {
+            database.chatDao().insertMessage(VaultRecords.encode(row, cipher))
+            try { repository.askAgain(session, row.id); fail("Unsafe original must require review, not create a new request.") }
+            catch (_: GatewayException) {}
+        }
+        assertEquals(0, chatRequests.get())
+        assertEquals(1, repository.getMessagesForSession(session).first().size)
     }
 
     @Test fun failedCaptureRetriesSameSourceAndStillRefreshesOtherDesktopRecords() = runBlocking {

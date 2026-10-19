@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
@@ -104,7 +104,7 @@ fun DashboardScreen(
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Dashboard", style = MaterialTheme.typography.headlineMedium)
-                IconButton(onClick = onNavigateSettings, modifier = Modifier.testTag("settings_icon_button")) { Icon(Icons.Default.Tune, contentDescription = "Settings") }
+                IconButton(onClick = onNavigateSettings, modifier = Modifier.testTag("settings_icon_button")) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
                 IconButton(onClick = onLockClick, modifier = Modifier.testTag("lock_vault_icon_button")) { Icon(Icons.Default.Lock, contentDescription = "Lock") }
             }
             ConnectionStatusBadge(status = connectionStatus, hostIp = nodeStats.localIp, onClick = onNavigateSettings)

@@ -43,6 +43,8 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import com.example.ui.ScreenCapturePreferences
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -94,7 +96,9 @@ class MainActivity : FragmentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private val unlockPromptState: UnlockPromptState by viewModels()
     private var biometricPrompt: BiometricPrompt? = null
-    private var resumedForAuthentication = false
+    private var resumedForAuthentication by mutableStateOf(false)
+    private val screenCapturePreferences by lazy { ScreenCapturePreferences(this) }
+    private var allowScreenshots by mutableStateOf(false)
     private var notificationRequestInProgress = false
     private var scanningPairing by mutableStateOf(false)
     private data class ExternalTarget(val route: String, val fingerprint: String, val demo: Boolean)
@@ -202,6 +206,7 @@ class MainActivity : FragmentActivity() {
         super.onPostResume()
         resumedForAuthentication = true
         authenticateWhenReady()
+        applyScreenCapturePolicy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -211,6 +216,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onPause() {
         resumedForAuthentication = false
+        // Protect the app before Android can snapshot its background transition.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         super.onPause()
     }
 
@@ -218,6 +225,26 @@ class MainActivity : FragmentActivity() {
         lockProtectedWorkspace()
         unlockPromptState.onStopped(isChangingConfigurations)
         super.onStop()
+    }
+
+    private fun applyScreenCapturePolicy() = synchronized(EncryptionManager) {
+        // Read live authorization/foreground state, never a delayed Compose snapshot.
+        val currentAccess = EncryptionManager.hasCurrentAccess()
+        val ready = viewModel.vaultReady.value
+        if (allowScreenshots && resumedForAuthentication && currentAccess && ready)
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        else window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    }
+
+    private fun updateAllowScreenshots(allowed: Boolean) = synchronized(EncryptionManager) {
+        // Expiry/lock cannot interleave between this check and the nonsecret preference write.
+        if (!resumedForAuthentication || !EncryptionManager.hasCurrentAccess() || !viewModel.vaultReady.value) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            return@synchronized
+        }
+        screenCapturePreferences.saveAllowed(allowed)
+        allowScreenshots = allowed
+        applyScreenCapturePolicy()
     }
 
     private fun lockProtectedWorkspace() {
@@ -229,11 +256,13 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
+        allowScreenshots = screenCapturePreferences.readAllowed()
         biometricPrompt = viewModel.biometricAuthManager.createBiometricPrompt(this,
             onAuthenticated = ::onDeviceAuthenticated,
             onError = { unlockPromptState.onFailure(it, terminal = true) },
             onFailed = { unlockPromptState.onFailure(it, terminal = false) })
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         enableEdgeToEdge()
 
         setContent {
@@ -264,6 +293,8 @@ class MainActivity : FragmentActivity() {
                 val secureClinicalMode by viewModel.secureClinicalMode.collectAsStateWithLifecycle()
                 val modelMode by viewModel.modelProcessingMode.collectAsStateWithLifecycle()
                 val isStreamingResponse by viewModel.isStreamingResponse.collectAsStateWithLifecycle()
+                val lastSavedChatSubmission by viewModel.lastSavedChatSubmission.collectAsStateWithLifecycle()
+                val chatSubmissionFinished by viewModel.chatSubmissionFinished.collectAsStateWithLifecycle()
                 val pairingState by viewModel.pairingState.collectAsStateWithLifecycle()
 
                 val snackbarHostState = remember { SnackbarHostState() }
@@ -316,17 +347,22 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                // Every workspace can contain protected records. FLAG_SECURE stays
-                // enforced independently of additional phone processing restrictions.
+                // Apply during the UI commit, before drawing the lock/opening surface.
+                // Disposal and lifecycle callbacks fail closed even if collection is paused.
+                DisposableEffect(isUnlocked, vaultReady, allowScreenshots, resumedForAuthentication) {
+                    applyScreenCapturePolicy()
+                    onDispose { window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+                }
 
                 LaunchedEffect(isUnlocked) { if (!isUnlocked) scanningPairing = false }
                 LaunchedEffect(currentTab) { if (currentTab != ScreenTab.SETTINGS) viewModel.cancelPairing() }
 
-                LaunchedEffect(feedbackMessage) {
-                    feedbackMessage?.let {
+                LaunchedEffect(feedbackMessage, isUnlocked, vaultReady) {
+                    if (isUnlocked && vaultReady) feedbackMessage?.let {
                         snackbarHostState.showSnackbar(it)
                         viewModel.clearFeedback()
                     }
+                    else snackbarHostState.currentSnackbarData?.dismiss()
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -356,6 +392,13 @@ class MainActivity : FragmentActivity() {
                             hostIp = "${nodeConfig.hostIp}:${nodeConfig.port}",
                             modelMode = modelMode,
                             isRequestRunning = isStreamingResponse,
+                            lastSavedSubmission = lastSavedChatSubmission,
+                            submissionFinished = chatSubmissionFinished,
+                            snackbarHost = { SnackbarHost(snackbarHostState) },
+                            lastConnectionCheck = lastConnectionCheck,
+                            isSyncing = isSyncing,
+                            onCheckConnection = { viewModel.triggerSync() },
+                            onAskAgain = { viewModel.askAgain(it.id) },
                             onModelModeChange = { viewModel.setModelProcessingMode(it) },
                             decryptText = { viewModel.decrypt(it) },
                             decryptAttachmentBitmap = { viewModel.decryptAttachmentBitmap(it) },
@@ -547,6 +590,8 @@ class MainActivity : FragmentActivity() {
                                         currentConfig = nodeConfig,
                                         connectionStatus = connectionStatus,
                                         secureClinicalMode = secureClinicalMode,
+                                        allowScreenshots = allowScreenshots,
+                                        onAllowScreenshotsChange = ::updateAllowScreenshots,
                                         onSaveConfig = {
                                             viewModel.updateNodeConfig(it)
                                             if (it.backgroundNotificationsEnabled) requestNotificationPermission()

@@ -88,6 +88,7 @@ import com.example.data.crypto.AttachmentUtils
 import com.example.data.local.entity.EncryptedChatMessage
 import com.example.data.local.entity.EncryptedChatSession
 import com.example.data.model.ChatAttachment
+import com.example.data.model.ChatSubmissionReceipt
 import com.example.data.model.ConnectionStatus
 import com.example.ui.components.ConnectionStatusBadge
 import com.example.ui.theme.CyberCyan
@@ -112,7 +113,14 @@ fun ChatDetailScreen(
     onPickEvidence: ((String) -> Unit)? = null, onTakePhoto: (() -> Unit)? = null,
     incomingEvidence: ChatAttachment? = null, onConsumeEvidence: () -> Unit = {},
     loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
-    isRequestRunning: Boolean = false
+    isRequestRunning: Boolean = false,
+    lastSavedSubmission: ChatSubmissionReceipt? = null,
+    submissionFinished: Long = 0,
+    snackbarHost: @Composable () -> Unit = {},
+    lastConnectionCheck: Long = 0,
+    isSyncing: Boolean = false,
+    onCheckConnection: () -> Unit = {},
+    onAskAgain: (EncryptedChatMessage) -> Unit = {}
 ) {
     BackHandler {
         onBackClick()
@@ -128,11 +136,18 @@ fun ChatDetailScreen(
     var showAttachmentSheet by remember { mutableStateOf(false) }
     var showModeDropdown by remember { mutableStateOf(false) }
     val isStreaming = isRequestRunning
-    var pendingSubmission by remember { mutableStateOf<Pair<String, Set<String>>?>(null) }
-    LaunchedEffect(messages) {
-        pendingSubmission?.let { (text, priorIds) ->
-            if (messages.any { it.id !in priorIds && it.sender == "user" && decryptText(it.encryptedContent) == text }) {
-                if (messageInput.trim() == text) messageInput = ""
+    var pendingSubmission by remember(session?.id) { mutableStateOf<PendingChatSubmission?>(null) }
+    LaunchedEffect(lastSavedSubmission, submissionFinished) {
+        pendingSubmission?.let { submitted ->
+            if (lastSavedSubmission != null && lastSavedSubmission.sessionId == session?.id &&
+                lastSavedSubmission.id != submitted.priorReceiptId) {
+                // A receipt acknowledges the durable local commit, independently of later delivery.
+                // Compare the raw submitted values so later edits/evidence are never cleared.
+                if (messageInput == submitted.text) messageInput = ""
+                if (currentAttachment == submitted.attachment) currentAttachment = null
+                pendingSubmission = null
+            } else if (submissionFinished != submitted.priorCompletion) {
+                // Saving failed: retain both draft fields and allow an explicit retry.
                 pendingSubmission = null
             }
         }
@@ -179,6 +194,7 @@ fun ChatDetailScreen(
         // Resize the whole conversation above the IME, so the fixed composer
         // and scrollable history share the remaining window instead of overlapping it.
         modifier = modifier.fillMaxSize().imePadding().testTag("chat_detail_screen"),
+        snackbarHost = snackbarHost,
         topBar = {
             TopAppBar(
                 title = {
@@ -244,8 +260,10 @@ fun ChatDetailScreen(
                     Spacer(modifier = Modifier.width(6.dp))
 
                     ConnectionStatusBadge(
-                        status = connectionStatus,
+                        status = if (isSyncing) ConnectionStatus.SYNCING else connectionStatus,
                         hostIp = hostIp,
+                        lastCheckedAt = lastConnectionCheck,
+                        onClick = onCheckConnection,
                         modifier = Modifier.padding(end = 8.dp)
                     )
                 },
@@ -272,7 +290,7 @@ fun ChatDetailScreen(
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text(
-                            text = "Offline Mode: Encrypted prompts & attachments will be queued and sent to desktop workstation upon reconnect.",
+                            text = "Text requests wait for desktop delivery. Attachments save as evidence notes in Notes/Library for human review.",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -397,7 +415,7 @@ fun ChatDetailScreen(
                         onValueChange = { messageInput = it },
                         placeholder = {
                             Text(
-                                if (currentAttachment != null) "Instructions for attachment..." else "Ask local desktop AI..."
+                                if (currentAttachment != null) "Note for evidence review..." else "Ask local desktop AI..."
                             )
                         },
                         modifier = Modifier
@@ -426,7 +444,7 @@ fun ChatDetailScreen(
                                 .clip(CircleShape)
                                 .testTag("chat_stop_button")
                         ) {
-                            Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop generation")
+                            Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop request")
                         }
                     } else {
                         // Send Button
@@ -436,11 +454,16 @@ fun ChatDetailScreen(
                                     val prompt = messageInput.trim().ifBlank {
                                         "Evidence supplied for human review. Image contents were not interpreted."
                                     }
-                                    if (currentAttachment == null) pendingSubmission = prompt to messages.map { it.id }.toSet()
+                                    // Store the exact submission synchronously before dispatch, using
+                                    // the same encrypted-RAM callback as ordinary draft changes.
+                                    onUnsentDraftChange(JSONObject().put("text", messageInput)
+                                        .put("evidence", attachmentForm(currentAttachment)).toString())
+                                    pendingSubmission = PendingChatSubmission(messageInput, currentAttachment,
+                                        lastSavedSubmission?.id, submissionFinished)
                                     onSendMessage(prompt, currentAttachment)
                                 }
                             },
-                            enabled = canSend,
+                            enabled = canSend && pendingSubmission == null,
                             colors = IconButtonDefaults.filledIconButtonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary
@@ -452,7 +475,7 @@ fun ChatDetailScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Send prompt"
+                                contentDescription = if (currentAttachment != null) "Save evidence note" else "Send prompt"
                             )
                         }
                     }
@@ -472,6 +495,12 @@ fun ChatDetailScreen(
             items(messages, key = { it.id }) { msg ->
                 val isUser = msg.sender == "user"
                 val decryptedText = decryptText(msg.encryptedContent)
+                // Locally acknowledged reply IDs retain an exact original request/policy link.
+                // Imported history lacks that policy provenance, so it does not offer this action.
+                val originalQuestion = if (msg.sender == "assistant" && msg.status == "SYNCED_DESKTOP" && msg.id.startsWith("reply-"))
+                    messages.firstOrNull { it.id == msg.id.removePrefix("reply-") && it.sender == "user" &&
+                        it.status == "SYNCED_DESKTOP" && !it.desktopFingerprint.isNullOrBlank() &&
+                        it.attachmentName == null && it.attachmentDataEncrypted == null } else null
 
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -599,23 +628,21 @@ fun ChatDetailScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (!isUser) {
-                                    // Regenerate button
+                                if (originalQuestion != null) {
                                     Row(
-                                        modifier = Modifier.clickable {
-                                            onSendMessage("Regenerate response: $decryptedText", null)
-                                        },
+                                        modifier = Modifier.testTag("chat_ask_again_${msg.id}")
+                                            .clickable(enabled = !isRequestRunning && pendingSubmission == null) { onAskAgain(originalQuestion) },
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Refresh,
-                                            contentDescription = "Regenerate",
+                                            contentDescription = "Ask original question again as a new request",
                                             tint = CyberTeal,
                                             modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(3.dp))
                                         Text(
-                                            text = "Regenerate",
+                                            text = "Ask again · new request",
                                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = CyberTeal)
                                         )
                                     }
@@ -643,8 +670,8 @@ fun ChatDetailScreen(
                                 } else {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(
-                                            imageVector = Icons.Default.CheckCircle,
-                                            contentDescription = "Synced",
+                                            imageVector = if (msg.status == "SYNCED_DESKTOP") Icons.Default.CheckCircle else Icons.Default.Schedule,
+                                            contentDescription = if (msg.status == "SYNCED_DESKTOP") "Synced" else "Delivery unconfirmed",
                                             tint = CyberTeal,
                                             modifier = Modifier.size(12.dp)
                                         )
@@ -652,7 +679,7 @@ fun ChatDetailScreen(
                                         Text(
                                             text = when (msg.status) {
                                                 "SYNCED_DESKTOP" -> if (isUser) "Desktop acknowledged" else "Desktop reply"
-                                                "REVIEW_REQUIRED" -> "Review required — not delivered"
+                                                "REVIEW_REQUIRED" -> "Review required — delivery unconfirmed"
                                                 "DEMO" -> "Demo only"
                                                 else -> "Pending or unverified delivery"
                                             },
@@ -663,6 +690,10 @@ fun ChatDetailScreen(
                                         )
                                     }
                                 }
+                            }
+                            if (isUser && msg.status in setOf("QUEUED_OFFLINE", "REVIEW_REQUIRED") && !msg.deliveryError.isNullOrBlank()) {
+                                Text(msg.deliveryError, modifier = Modifier.testTag("chat_delivery_error_${msg.id}"),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -684,12 +715,12 @@ fun ChatDetailScreen(
                     .padding(20.dp)
             ) {
                 Text(
-                    text = "Add Attachment to Prompt",
+                    text = "Add evidence note from chat",
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Evidence is protected on this phone and transferred over paired HTTPS for human review. The text model does not interpret photos.",
+                    text = "This saves an evidence note in Notes/Library for human review over paired HTTPS. Files are not uploaded into chat or interpreted by the text model.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -797,3 +828,10 @@ fun AttachmentOptionRow(
         }
     }
 }
+
+private data class PendingChatSubmission(
+    val text: String,
+    val attachment: ChatAttachment?,
+    val priorReceiptId: String?,
+    val priorCompletion: Long
+)
