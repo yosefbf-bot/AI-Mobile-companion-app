@@ -20,6 +20,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.semantics.getOrNull
 import com.example.data.model.ChatAttachment
 import androidx.compose.ui.test.assertTextContains
 import androidx.core.view.ViewCompat
@@ -269,8 +270,12 @@ class OsCredentialKeystoreAcceptanceTest {
             rule.waitForIdle()
             rule.onNodeWithText(feedback).assertIsDisplayed()
             rule.onNodeWithTag("attachment_preview_card").assertDoesNotExist()
-            rule.onNodeWithTag("chat_message_input").assert(androidx.compose.ui.test.SemanticsMatcher.expectValue(
-                androidx.compose.ui.semantics.SemanticsProperties.EditableText, androidx.compose.ui.text.AnnotatedString("")))
+            val input = rule.onNodeWithTag("chat_message_input")
+            val emptyEditableText = androidx.compose.ui.test.SemanticsMatcher("EditableText.text is exactly empty") {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.EditableText)?.text == ""
+            }
+            rule.waitUntil(10_000) { emptyEditableText.matches(input.fetchSemanticsNode()) }
+            input.assert(emptyEditableText)
             rule.onNodeWithTag("chat_send_button").assertIsNotEnabled()
             val document = runBlocking { model.repository.documents.first().single { it.id == captureId } }
             assertEquals("CAPTURE_PENDING", document.fileType)

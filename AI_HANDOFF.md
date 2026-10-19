@@ -18,19 +18,31 @@ No new package, cloud API, relay, owner installation or distribution is introduc
   with a new ID, same pairing and at least its original privacy restrictions. It does
   not rewind context. Pending/review/unknown-policy imported history is excluded.
 
-**Current local validation:** both APK builds pass; full unit suite **112/112**, zero
+**Baseline local validation (source `217718d`):** both APK builds pass; full unit suite **112/112**, zero
 failures/errors/skips, including both actual current-Core legacy and v2 bootstrap TLS
 cases. New Compose 6/6, encrypted-draft 3/3 and repository 28/28 pass. Both APKs verify
 original signer `4f2f15654f1730b6b27a942464629d05b8388c5f0c7fa60863c3ffff6c435fbd`;
 package remains `com.aistudio.privateai.kq7zwa`, version 1.2.3-dev/code 6.
 
-**Local lint was NOT EXECUTED:** automatic approval review timed out before process
-creation on the first request and its one permitted retry. This is not a lint pass
-or source failure. The coordinator will publish one review PR; mandatory hosted
-`lintDebug`, unit checks and all **nine actual API 34 device cases** must pass and
-their raw results be inspected before merge/distribution. Current-source hosted
-device execution and physical owner-phone/live-account acceptance remain unperformed.
-The previous 1.2.2 acceptance below does not accept this candidate.
+**Hosted PR #10 run `39244077514` at source `217718d` failed:** unit XML records
+112 tests: 110 passed, 0 failures/errors and 2 external-Core-fixture skips. Hosted lint
+completed with 0 errors and 76 warnings. Actual API 34 device XML records 9 tests:
+8 passed, 1 failed, 0 errors/skips. The new chat evidence case failed at line 272 on
+full `AnnotatedString` equality although its dump printed empty `EditableText`;
+the earlier feedback and evidence-removal assertions passed. Preserve this raw failure.
+
+The follow-up changes only that instrumented assertion and these validation notes.
+It waits at most 10 seconds for exact `EditableText.text == ""`, then explicitly asserts
+the same value; an absent property or whitespace fails. Compose 1.7.2 equality also
+compares styles/annotations while its printed string contains only text. The runtime
+metadata difference was not captured, and a scheduling contribution is not excluded.
+All receipt, feedback, evidence, disabled-send, encrypted-record, failed-draft and real
+OS-lock assertions remain. Local corrected test-APK assembly **passed offline** (one worker, no device execution). Fresh full
+**nine-case actual-device validation is pending** before merge/distribution; compile
+success cannot accept device behavior. Production code and unreleased 1.2.3-dev/code 6
+are unchanged. Local lint had not executed due two approval-review startup timeouts;
+the hosted lint result above is an actual execution for `217718d`. Physical owner-phone
+and live-account acceptance remain unperformed. Prior 1.2.2 results do not accept this candidate.
 
 See [scope, retained first failures and validation](docs/FIVE_USABILITY_FIXES_2026-10-18.md).
 

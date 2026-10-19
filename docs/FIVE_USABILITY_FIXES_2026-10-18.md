@@ -52,12 +52,59 @@ Fourteen new unit cases use existing architecture:
 A ninth actual-device case is compiled in `OsCredentialKeystoreAcceptanceTest`. It requires
 real OS PIN/Keystore unlock, saves synthetic evidence offline, asserts visible snackbar,
 empty editable input and encrypted durable payload, preserves an over-limit draft with its
-actual error in active chat, and checks that lock removes chat/feedback. **It has not yet
-executed.** Compilation and Robolectric do not establish hosted or physical-phone acceptance.
+actual error in active chat, and checks that lock removes chat/feedback. Its first hosted
+execution failed as recorded below. Compilation and Robolectric do not establish hosted
+or physical-phone acceptance.
 
-## Current local results
+## Hosted failure and test-only correction
 
-- `assembleDebug` and `assembleDebugAndroidTest`: passed for the current worktree.
+PR #10 source `217718d1b102f5efbe20ec0740cad809ebd818b2`, run `39244077514`, failed.
+Raw unit XML: **112 tests, 110 passed, 0 failures, 0 errors, 2 skips** (the unavailable
+external-Core-fixture cases `desktopBootstrapCommitsVerifiedConfigurationAndRejectsRealReplay`
+and `realDesktopRoundTripReplayHistoryEvidenceActionsDraftsAndNotices`). Hosted `lintDebug`
+executed: **0 errors, 76 warnings**. Actual API 34 device XML: **9 tests, 8 passed,
+1 failure, 0 errors/skips**. All original eight device cases passed, including real
+five-minute Keystore expiry and keyboard geometry. These are not nine-case acceptance.
+
+The sole failure was the new chat-evidence case at source line 272, after visible save
+feedback and attachment removal passed. Its failed `expectValue(EditableText,
+AnnotatedString(""))` assertion printed `EditableText = ''` and selection `TextRange(0, 0)`.
+Resolved Compose 1.7.2 bytecode shows that `expectValue` calls structural equality;
+`AnnotatedString.equals` includes text, span styles, paragraph styles and annotations,
+whereas `toString` prints only text. Hidden metadata can therefore differ despite an
+empty dump. The failed run did not record those metadata fields, so their exact difference
+and any scheduling contribution remain uncertain; no production defect is claimed fixed.
+
+The correction imports the existing `getOrNull` API, waits at most 10 seconds for the
+editable semantics' exact `.text == ""`, then explicitly asserts that same textual value.
+Missing editable semantics, whitespace and an uncleared draft fail. The durable receipt
+wait, exact feedback, attachment absence, disabled send, encrypted capture/payload,
+failed-draft retention, no-chat-upload and real OS-lock checks are retained. Newer-edit
+and duplicate-submit regressions remain unchanged. Only this device-test file and the
+two current validation documents change; production source, dependency, workflow,
+authentication and unreleased 1.2.3-dev/code 6 remain unchanged. No skip or unlock bypass
+is added. Local corrected test-APK assembly **passed offline** (one worker, no device execution). A fresh complete nine-case
+device run and exact-source checks remain **pending and required** before merge/distribution.
+
+The corrected local test APK SHA256 is `41141f071be117144e33654f523cdeb7fdce336ffe963f750ee7e5f10af1fbdb`;
+its generated debug signer verifies as `c22024dda78abdc376b87e518360e2f50c39021ceca7ab1a05d6100cee288c80`.
+It is a compile-only test fixture, with no local installation/device execution, and is
+not an owner upgrade payload. The production APK retains its baseline hash and original
+signer. The first receipt helper incorrectly required their signer identities to match;
+that receipt-scope assertion failure is preserved separately and was not a build failure
+or a signing-source change. No rebuild or re-sign was performed. The full assembly log
+and certificate output are retained with the ignored diagnosis receipt.
+
+The failed raw archive is retained at `Validation/owner-funded-check-resume/
+five-AI-Mobile-companion-app-pull_request-217718d/android-validation.zip` in the desktop
+evidence checkout, with `verified.json` and complete job logs alongside it. Archive
+SHA256: `04316c8f1ebdacca1334a64db3f1758bf23275c2f190174f9b612ea07fe4208e`.
+The local correction diagnosis/compile receipt is kept in the ignored
+`app/build/android5-editabletext-2026-10-19/` folder. Prior proofs remain unchanged.
+
+## Baseline local results (source `217718d`)
+
+- `assembleDebug` and `assembleDebugAndroidTest`: passed before this test-only correction.
 - `testDebugUnitTest`: **112 executed, 112 passed, 0 failures, 0 errors, 0 skips**. Both
   actual current-Core `DesktopGatewayInteropTest` and `BootstrapDesktopInteropTest` passed
   using a refreshed account-free synthetic fixture. No previous-source result is reused.
@@ -65,9 +112,9 @@ executed.** Compilation and Robolectric do not establish hosted or physical-phon
   retry both timed out in automatic permission review before process creation. No lint
   result, zero-error claim or warning count is inferred. A separate earlier XML archive
   approval failed on review-model capacity; the full raw unit XML remains retained.
-- The coordinator will publish a reversible review PR. Existing mandatory hosted lint,
-  unit and **all nine actual API 34 emulator cases** remain required before merge and
-  distribution, with exact-source raw XML/check inspection. No gate or workflow is weakened.
+- PR #10's first hosted lint/unit execution is recorded above, including its two unit
+  skips and failed device case. Fresh exact-source checks and **all nine actual API 34
+  emulator cases** remain required before merge/distribution. No gate/workflow is weakened.
 - Package `com.aistudio.privateai.kq7zwa`, version `1.2.3-dev` / code `6` verified.
 - App SHA256: `c22319eb0ceeff0eed54a3815ff15c2df48042a02580a2e44f10fba1cd163c98`.
 - Test APK SHA256: `90a0318ff204f43834d953f6bc92043db4132ce843edf08b9aa647b4a5bfccf5`.
