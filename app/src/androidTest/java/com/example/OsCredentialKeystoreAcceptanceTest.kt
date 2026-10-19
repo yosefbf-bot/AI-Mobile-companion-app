@@ -399,10 +399,17 @@ class OsCredentialKeystoreAcceptanceTest {
             assertSecure(false)
 
             phase = "screenshots: background and return stay secure before fresh authentication"
-            device.pressHome()
+            assertTrue("Home must reach the real launcher.", device.pressHome())
+            rule.waitUntil(10_000) { rule.activityRule.scenario.state == Lifecycle.State.CREATED }
             rule.waitUntil(10_000) { !EncryptionManager.hasCurrentAccess() }
             assertSecure(true)
-            returnFromHome()
+            // Home was already pressed and the real stop observed; do not press it twice.
+            val launchIntent = instrumentation.targetContext.packageManager
+                .getLaunchIntentForPackage(instrumentation.targetContext.packageName)
+            assertNotNull("The existing app launch intent must be available.", launchIntent)
+            instrumentation.targetContext.startActivity(launchIntent!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertNotNull("Returning must require real Android authentication.", credentialField(device))
+            assertFalse("Returning must remain locked before the credential is entered.", EncryptionManager.hasCurrentAccess())
             assertSecure(true)
         } catch (failure: Throwable) {
             Log.e("PrivateAIAcceptance", "Failed at $phase", failure)

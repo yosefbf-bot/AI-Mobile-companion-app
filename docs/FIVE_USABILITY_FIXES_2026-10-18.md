@@ -1,3 +1,17 @@
+## Screenshot device-fixture follow-up — October 19, 2026
+
+Run39305305505 atc44fe16:116 hosted unit passes, two named unavailable desktop-fixture
+skips, no unit failures; lint0errors/77warnings. Actual Android:9passed/1failed/0skipped.
+Only the new screenshot case failed: it pressed Home, observed lock/protection, then
+called a helper that pressed Home again. The second command returned false at line433.
+All preceding screenshot on/off, persistence, recreation, lock and background-protection
+assertions passed; this is not a confirmed application defect. Raw first evidence is retained.
+The new case now asserts the first Home, observes actual stopped state, relaunches via
+the normal package intent, and requires the actual Android credential prompt, continued
+locked access and secure window. Production code and all nine prior cases/helper remain
+unchanged. Fresh exact-head full checks/all ten device cases remain required; no merge
+or owner installation is accepted from the failed run.
+
 ## Isolated screenshot candidate — October 19, 2026
 
 This candidate contains the on/off **Allow screenshots** setting, default off,
