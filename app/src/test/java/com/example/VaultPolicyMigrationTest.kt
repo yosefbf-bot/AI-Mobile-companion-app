@@ -46,27 +46,28 @@ class VaultPolicyMigrationTest {
                 status = status, attemptedAt = if (i == 0) null else 41L, serverId = "stable-server-$i"))
         }
     }
+    // REPLACE can change SQLite physical order. Compare complete records by stable ID.
     private suspend fun logical(db: AppDatabase): List<Any> {
         val values = mutableListOf<Any>()
-        for (row in db.chatDao().allSessionsForMigration()) values.add(VaultRecords.decode(row, cipher).let {
+        for (row in db.chatDao().allSessionsForMigration().sortedBy { it.id }) values.add(VaultRecords.decode(row, cipher).let {
             it.copy(lastMessagePreviewEncrypted = if (it.lastMessagePreviewEncrypted.isEmpty()) "" else cipher.decrypt(it.lastMessagePreviewEncrypted))
         })
-        for (row in db.chatDao().allMessagesForMigration()) values.add(VaultRecords.decode(row, cipher).let {
+        for (row in db.chatDao().allMessagesForMigration().sortedBy { it.id }) values.add(VaultRecords.decode(row, cipher).let {
             it.copy(encryptedContent = cipher.decrypt(it.encryptedContent), attachmentDataEncrypted = it.attachmentDataEncrypted?.let(cipher::decrypt))
         })
-        for (row in db.documentDao().allForMigration()) values.add(VaultRecords.decode(row, cipher).let { it.copy(encryptedContent = cipher.decrypt(it.encryptedContent)) })
-        values.addAll(db.taskDao().allTasksForMigration().map { VaultRecords.decode(it, cipher) })
-        values.addAll(db.taskDao().allNotificationsForMigration().map { VaultRecords.decode(it, cipher) })
-        values.addAll(db.pendingOperationDao().allAfterForPolicy(null, 100).map { it.copy(encryptedPayload = cipher.decrypt(it.encryptedPayload)) })
+        for (row in db.documentDao().allForMigration().sortedBy { it.id }) values.add(VaultRecords.decode(row, cipher).let { it.copy(encryptedContent = cipher.decrypt(it.encryptedContent)) })
+        values.addAll(db.taskDao().allTasksForMigration().sortedBy { it.id }.map { VaultRecords.decode(it, cipher) })
+        values.addAll(db.taskDao().allNotificationsForMigration().sortedBy { it.id }.map { VaultRecords.decode(it, cipher) })
+        values.addAll(db.pendingOperationDao().allAfterForPolicy(null, 100).sortedBy { it.id }.map { it.copy(encryptedPayload = cipher.decrypt(it.encryptedPayload)) })
         return values
     }
     private suspend fun ciphertexts(db: AppDatabase): List<String> = buildList {
-        db.chatDao().allSessionsForMigration().forEach { add(it.title); add(it.modelUsed); if (it.lastMessagePreviewEncrypted.isNotEmpty()) add(it.lastMessagePreviewEncrypted) }
-        db.chatDao().allMessagesForMigration().forEach { add(it.encryptedContent); add(it.modelName); it.attachmentName?.let(::add); it.attachmentDataEncrypted?.let(::add); it.deliveryError?.let(::add) }
-        db.documentDao().allForMigration().forEach { add(it.fileName); add(it.tags); add(it.encryptedContent) }
-        db.taskDao().allTasksForMigration().forEach { add(it.title); add(it.modelName); it.resultSummary?.let(::add); it.approvalPrompt?.let(::add) }
-        db.taskDao().allNotificationsForMigration().forEach { add(it.title); add(it.message); it.assignedTo?.let(::add); it.relatedAction?.let(::add) }
-        db.pendingOperationDao().allAfterForPolicy(null, 100).forEach { add(it.encryptedPayload) }
+        db.chatDao().allSessionsForMigration().sortedBy { it.id }.forEach { add(it.title); add(it.modelUsed); if (it.lastMessagePreviewEncrypted.isNotEmpty()) add(it.lastMessagePreviewEncrypted) }
+        db.chatDao().allMessagesForMigration().sortedBy { it.id }.forEach { add(it.encryptedContent); add(it.modelName); it.attachmentName?.let(::add); it.attachmentDataEncrypted?.let(::add); it.deliveryError?.let(::add) }
+        db.documentDao().allForMigration().sortedBy { it.id }.forEach { add(it.fileName); add(it.tags); add(it.encryptedContent) }
+        db.taskDao().allTasksForMigration().sortedBy { it.id }.forEach { add(it.title); add(it.modelName); it.resultSummary?.let(::add); it.approvalPrompt?.let(::add) }
+        db.taskDao().allNotificationsForMigration().sortedBy { it.id }.forEach { add(it.title); add(it.message); it.assignedTo?.let(::add); it.relatedAction?.let(::add) }
+        db.pendingOperationDao().allAfterForPolicy(null, 100).sortedBy { it.id }.forEach { add(it.encryptedPayload) }
     }
     @Test fun everyEncryptedLeafBothDatabasesAndAllOutboxStatesPreserveExactLogicalRecords() = runBlocking {
         val real = database(); val demo = database(); seed(real); seed(demo)
@@ -103,10 +104,10 @@ class VaultPolicyMigrationTest {
         try { VaultPolicyMigration.convert(db, { cipher.rewrite(it, 30) }, { throw VaultUnavailableException() }); fail("Locked migration must fail.") }
         catch (_: VaultUnavailableException) { }
         assertEquals(before, ciphertexts(db))
-        val row = db.chatDao().allSessionsForMigration().first()
+        val row = db.chatDao().allSessionsForMigration().single { it.id.isEmpty() }
         db.chatDao().insertSession(row.copy(title = "PAI3:99:invalid"))
         try { VaultPolicyMigration.convert(db, { cipher.rewrite(it, 30) }, {}); fail("Corrupt authenticated data must fail.") }
         catch (_: IllegalArgumentException) { }
-        assertEquals("PAI3:99:invalid", db.chatDao().allSessionsForMigration().first().title)
+        assertEquals("PAI3:99:invalid", db.chatDao().allSessionsForMigration().single { it.id == row.id }.title)
     }
 }

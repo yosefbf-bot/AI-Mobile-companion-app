@@ -137,4 +137,39 @@ class DurableDraftAcknowledgmentTest {
             assertEquals(0L, db.localDraftDao().acknowledgmentCount())
         } finally { restarted?.close(); old.close(); db.close() }
     }
+
+
+    @Test fun liveAcknowledgmentClearsKnownOlderOffDiskDraftBeforeRetiringReceiptGeneration() = runBlocking {
+        for (newerInput in listOf(false, true)) {
+            val db = database(); val cipher = PolicyTestCipher(); val drafts = store(db, cipher)
+            var restarted: LocalDraftStore? = null
+            try {
+                var token = drafts.updateFields(drafts.load("capture").token,
+                    "{\"text\":\"SYNTHETIC older partial\",\"location\":\"SYNTHETIC unsubmitted location\"}", null, true)
+                drafts.flush()
+                token = drafts.updateFields(token,
+                    "{\"text\":\"SYNTHETIC complete submitted text\",\"location\":\"SYNTHETIC unsubmitted location\"}", null, false)
+                val submitted = drafts.current(token).form
+                val submission = drafts.prepareSubmission(token, submitted, setOf("text", "evidence"))
+                if (newerInput) token = drafts.updateFields(token,
+                    "{\"text\":\"SYNTHETIC newer OFF input\",\"location\":\"SYNTHETIC unsubmitted location\"}", null, false)
+                DraftAcknowledgments.commit(db, submission) { db.documentDao().insertDocument(document(cipher)) }
+                token = drafts.acknowledge(token, submitted, { current, before ->
+                    val value = JSONObject(current)
+                    if (value.optString("text") == JSONObject(before).optString("text")) value.put("text", "")
+                    value.toString()
+                }, submission)
+                drafts.flush()
+                assertEquals(if (newerInput) "SYNTHETIC newer OFF input" else "",
+                    JSONObject(drafts.current(token).form).optString("text"))
+                drafts.reconcileAcknowledgments(listOf(db))
+                assertEquals(0L, db.localDraftDao().acknowledgmentCount())
+                restarted = store(db, cipher)
+                val recovered = JSONObject(restarted.load("capture").form)
+                assertEquals("", recovered.optString("text"))
+                assertEquals("SYNTHETIC unsubmitted location", recovered.getString("location"))
+                assertEquals(1, db.documentDao().allForMigration().size)
+            } finally { restarted?.close(); drafts.close(); db.close() }
+        }
+    }
 }

@@ -1,3 +1,22 @@
+# First hosted secure-session validation — October 19, 2026
+
+PR #11 is the review path for 1.2.4-dev/code7. First run `39336932981`
+at `b2cda1d7568f51dab5893e4f92bbe8f0bed61511` built the production debug APK,
+compiled unit tests and exported the genuine Room5 schema. Unit XML records
+173 cases: 165 passed, six failed, two named external desktop-fixture skips.
+Lint and actual-device execution were not reached; this run is not acceptance.
+The failed raw archive/logs are retained locally with API digest, size and CRC
+verification. Schema5 is preserved from that exact KSP artifact, not fabricated;
+all six prior entities remain unchanged and the two new tables match migration SQL.
+
+Before merge, the next candidate must address all six failures and the independently
+reviewed older-partial draft acknowledgment correction. Its causal regression
+brings the source inventory to 174 unit cases (172 expected passes and the two
+existing named external skips), plus all twelve actual-device cases without skips.
+The latest exact-head PR and main checks and their raw reports are authoritative;
+this static document does not certify a later commit. Keep the first failures and
+do not weaken the full gate, remove tests or claim owner-phone acceptance.
+
 # Secure phone sessions and encrypted local auto-drafts — October 19, 2026
 
 Current development branch `chatgpt/secure-unlock-autodrafts-2026-10-19` starts

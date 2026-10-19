@@ -196,7 +196,15 @@ internal class LocalDraftStore(private val cipher: VaultCipher,
         if (submission != null && (submission.database !== entry.scope.database || submission.draftId != entry.ram.id ||
                 submission.deleteGeneration != entry.ram.deleteGeneration)) return@synchronized token
         check(entry.ram.deleteGeneration < Long.MAX_VALUE && entry.ram.revision < Long.MAX_VALUE)
-        fun reconcileRow(row: LocalDraft): Pair<String, Encoded> {
+        fun reconcileRow(row: LocalDraft, historical: Boolean = false): Pair<String, Encoded> {
+            if (historical && submission != null) {
+                // The disk form may be an earlier autosaved partial while the
+                // submitted complete form existed only in RAM with autosave off.
+                val reconciled = DraftAcknowledgments.apply(row,
+                    DraftAcknowledgments.intent(submission.receipt, cipher), cipher, historical = true)!!
+                return decode(reconciled) to Encoded(reconciled,
+                    reconciled.evidenceId?.let { evidenceCache.getValue(it) })
+            }
             val original = decode(row)
             val remaining = reconcile(original, submitted)
             val (fields, evidence) = split(remaining)
@@ -208,7 +216,7 @@ internal class LocalDraftStore(private val cipher: VaultCipher,
             deleteGeneration = entry.ram.deleteGeneration + 1))
         val durable = admitted[token.id]?.row ?: entry.disk
         val durableNext = if (durable == null || durable.deleted) null else {
-            val (diskRemaining, diskEncoded) = reconcileRow(durable)
+            val (diskRemaining, diskEncoded) = reconcileRow(durable, historical = true)
             if (diskRemaining == remaining) next else diskEncoded.copy(row = diskEncoded.row.copy(revision = next.row.revision,
                 deleteGeneration = next.row.deleteGeneration))
         }

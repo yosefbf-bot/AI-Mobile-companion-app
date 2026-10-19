@@ -3,6 +3,7 @@ package com.example
 import android.content.Context
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
@@ -59,6 +60,7 @@ class LocalDraftCompositionTest {
     private fun frame() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
     private fun pumpUntil(condition: () -> Boolean) {
         repeat(200) {
+            rule.runOnIdle { Snapshot.sendApplyNotifications() }
             dispatcher.scheduler.runCurrent(); frame()
             if (condition()) return
             Thread.sleep(10)
@@ -102,11 +104,14 @@ class LocalDraftCompositionTest {
     @Test fun deleteRequiresConfirmationAndStaleFormCannotResurrectDeletedOrLockedWork() {
         render(); pumpUntil { childCompositions > 0 }
         val stale = latest!!
-        rule.onNodeWithTag("delete_local_draft").performClick(); frame()
-        rule.onNodeWithTag("cancel_delete_local_draft").performClick(); frame()
+        rule.onNodeWithTag("delete_local_draft").performClick()
+        pumpUntil { rule.onAllNodesWithTag("cancel_delete_local_draft").fetchSemanticsNodes().size == 1 }
+        rule.onNodeWithTag("cancel_delete_local_draft").assertIsDisplayed().performClick()
+        pumpUntil { rule.onAllNodesWithTag("cancel_delete_local_draft").fetchSemanticsNodes().isEmpty() }
         rule.onNodeWithTag("fixture_draft_field").assertTextEquals("Persisted unfinished note")
-        rule.onNodeWithTag("delete_local_draft").performClick(); frame()
-        rule.onNodeWithTag("confirm_delete_local_draft").performClick(); frame()
+        rule.onNodeWithTag("delete_local_draft").performClick()
+        pumpUntil { rule.onAllNodesWithTag("confirm_delete_local_draft").fetchSemanticsNodes().size == 1 }
+        rule.onNodeWithTag("confirm_delete_local_draft").assertIsDisplayed().performClick(); frame()
         pumpUntil { rule.onAllNodesWithTag("fixture_draft_field").fetchSemanticsNodes().isNotEmpty() && latest!!.reset != stale.reset }
         rule.onNodeWithTag("fixture_draft_field").assertTextEquals("")
         rule.runOnIdle { stale.update("{\"note\":\"Stale resurrection\"}") }
@@ -116,7 +121,7 @@ class LocalDraftCompositionTest {
         }
         val beforeLock = latest!!
         rule.runOnIdle { controller.onLocked(); beforeLock.update("{\"note\":\"Late locked callback\"}") }
-        frame()
+        pumpUntil { rule.onAllNodesWithTag("fixture_draft_field").fetchSemanticsNodes().isEmpty() }
         rule.onNodeWithTag("fixture_draft_field").assertDoesNotExist()
         rule.onNodeWithTag("draft_loading").assertIsDisplayed()
     }

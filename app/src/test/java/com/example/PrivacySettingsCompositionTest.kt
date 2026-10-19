@@ -6,6 +6,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
@@ -46,6 +49,17 @@ class PrivacySettingsCompositionTest {
         rule.mainClock.autoAdvance = false
     }
     private fun frame() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
+    private fun pumpUntil(description: String, condition: () -> Boolean) {
+        // With autoAdvance disabled, waitForIdle does not deliver a recomposition frame.
+        // Publish the test's snapshot writes before pumping the paused clock, including
+        // a later frame for newly attached dialog/layout roots.
+        repeat(120) {
+            rule.runOnIdle { Snapshot.sendApplyNotifications() }
+            frame()
+            if (condition()) return
+        }
+        assertTrue(description, condition())
+    }
     @After fun disposeAndClearFixture() {
         rule.runOnIdle { visible.value = false }
         frame()
@@ -106,8 +120,9 @@ class PrivacySettingsCompositionTest {
     @Test fun durationRadioAndLabelCentersAlignWithoutEnablingUnsupportedSessions() {
         phoneLock.value = com.example.data.crypto.DeviceScreenLockState.NOT_CONFIGURED
         render()
-        val radio = rule.onNodeWithTag("session_mode_5").assertIsSelected().fetchSemanticsNode().boundsInRoot
-        val label = rule.onNodeWithTag("session_label_5").fetchSemanticsNode().boundsInRoot
+        rule.onNodeWithTag("session_mode_5").assertIsSelected()
+        val radio = rule.onNodeWithTag("session_radio_5", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val label = rule.onNodeWithTag("session_label_5", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertEquals(radio.center.y, label.center.y, 1f)
         rule.onNodeWithTag("session_mode_10").assertIsNotEnabled().performClick()
         frame()
@@ -123,7 +138,11 @@ class PrivacySettingsCompositionTest {
             rule.onNodeWithTag("session_mode_5").assertIsSelected()
         }
         assertEquals(listOf(10, 20, 30), requested)
-        rule.runOnIdle { committed.value = 20 }; frame()
+        rule.runOnIdle { committed.value = 20 }
+        pumpUntil("Committed policy must select the 20-minute row.") {
+            rule.onAllNodesWithTag("session_mode_20").fetchSemanticsNodes().singleOrNull()
+                ?.config?.getOrNull(SemanticsProperties.Selected) == true
+        }
         rule.onNodeWithTag("session_mode_20").assertIsSelected()
         rule.onNodeWithTag("session_mode_5").performScrollTo().performClick(); frame()
         assertEquals(listOf(10, 20, 30, 5), requested)
@@ -138,7 +157,11 @@ class PrivacySettingsCompositionTest {
         listOf(com.example.data.crypto.DeviceScreenLockState.NOT_CONFIGURED,
             com.example.data.crypto.DeviceScreenLockState.SECURE_LOCKED,
             com.example.data.crypto.DeviceScreenLockState.UNAVAILABLE).forEach { state ->
-            rule.runOnIdle { phoneLock.value = state }; frame()
+            rule.runOnIdle { phoneLock.value = state }
+            pumpUntil("The $state phone must disable session changes.") {
+                rule.onAllNodesWithTag("session_mode_30").fetchSemanticsNodes().singleOrNull()
+                    ?.config?.contains(SemanticsProperties.Disabled) == true
+            }
             rule.onNodeWithTag("session_mode_30").performScrollTo().assertIsNotEnabled().performClick(); frame()
             rule.onNodeWithTag("session_screen_lock_requirement").assertExists()
         }
