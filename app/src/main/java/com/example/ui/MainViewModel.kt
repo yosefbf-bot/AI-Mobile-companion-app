@@ -21,6 +21,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import com.example.ui.pairing.PairingUiState
 import com.example.ui.components.acknowledgeChatDraft
+import com.example.ui.components.acknowledgeFormFields
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,7 +54,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val pendingEvidence = _pendingEvidence.asStateFlow()
     private val _lastSavedCaptureId = MutableStateFlow<String?>(null)
     val lastSavedCaptureId = _lastSavedCaptureId.asStateFlow()
-    private val protectedDrafts = mutableMapOf<String, String>()
+    val draftController = LocalDraftController(repository, viewModelScope, AutoDraftPreferences(application),
+        ready = { vaultReady.value && EncryptionManager.hasCurrentAccess() },
+        scopeIdentity = { PairingConfigParser.destinationIdentity(nodeConfig.value) + ":" + nodeConfig.value.simulatedNodeEnabled })
     var stopMeetingRecording: (() -> Unit)? = null
     var stopPairingScanner: (() -> Unit)? = null
     private var pairingJob: Job? = null
@@ -71,6 +74,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val activeSession = _activeSessionId.flatMapLatest { id -> id?.let(repository::getSessionById) ?: flowOf(null) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    private val _documentSaved = MutableStateFlow(0L)
+    val documentSaved = _documentSaved.asStateFlow()
     private val _selectedDocument = MutableStateFlow<EncryptedDocument?>(null)
     val selectedDocument = _selectedDocument.asStateFlow()
     private val _userFeedback = MutableStateFlow<String?>(null)
@@ -92,6 +97,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     try { opening.join(); if (vaultReady.value) configureNotifications(nodeConfig.value) }
                     finally { if (!isUnlocked.value) opening.cancel() }
                 } else {
+                    draftController.onLocked()
                     stopPairingScanner?.invoke(); cancelPairing()
                     stopMeetingRecording?.invoke(); repository.onLocked(); _pendingEvidence.value = null; _lastSavedCaptureId.value = null; _selectedDocument.value = null
                     _lastSavedChatSubmission.value = null; _userFeedback.value = null
@@ -105,14 +111,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pendingEvidence.value = PendingEvidence(route, attachment)
     }
     fun clearPendingEvidence() { _pendingEvidence.value = null }
-    private fun draftKey(route: String) = PairingConfigParser.destinationIdentity(nodeConfig.value) + ":" + route
-    fun saveUnsentDraft(route: String, text: String) {
-        if (vaultReady.value) try { protectedDrafts[draftKey(route)] = EncryptionManager.encrypt(text) }
-        catch (_: VaultUnavailableException) { biometricAuthManager.lock() }
-    }
-    fun restoreUnsentDraft(route: String): String = try {
-        if (!vaultReady.value) "" else protectedDrafts[draftKey(route)]?.let(EncryptionManager::decrypt).orEmpty()
-    } catch (_: Exception) { "" }
+    fun saveUnsentDraft(route: String, text: String) = draftController.updateSerialized(route, text)
+    fun restoreUnsentDraft(route: String): String = draftController.currentForm(route)
 
     private fun operation(message: String? = null, action: suspend () -> Unit) {
         viewModelScope.launch {
@@ -125,6 +125,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } finally { activeOperations--; _workflowBusy.value = activeOperations > 0 }
         }
     }
+    private fun captureDraftBeforeSubmission(): Boolean {
+        if (draftController.captureBeforeLock()) return true
+        if (vaultReady.value && EncryptionManager.hasCurrentAccess())
+            _userFeedback.value = "The latest draft could not be protected. Keep this app open and retry before saving or sending."
+        return false
+    }
     fun clearFeedback() { _userFeedback.value = null }
     fun selectSession(id: String?) { _activeSessionId.value = id }
     fun selectDocument(document: EncryptedDocument?) { _selectedDocument.value = document }
@@ -135,11 +141,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun sendMessage(prompt: String, attachment: ChatAttachment? = null) {
         if (prompt.isBlank() && attachment == null) return
         val route = "chat:" + (_activeSessionId.value ?: return)
+        if (!captureDraftBeforeSubmission()) return
         val submitted = restoreUnsentDraft(route)
-        submitChat { id -> repository.sendMessage(id, prompt, attachment, onSaved = {
+        submitChat { id ->
+            val submission = draftController.prepareSubmission(route, submitted, setOf("text", "evidence"))
+            repository.sendMessage(id, prompt, attachment, draftSubmission = submission, onSaved = {
             // Acknowledge the encrypted-RAM form immediately, even if lock/navigation
             // disposes the composer before its next frame handles the receipt.
-            saveUnsentDraft(route, acknowledgeChatDraft(restoreUnsentDraft(route), submitted))
+            draftController.acknowledge(route, submitted, submission, ::acknowledgeChatDraft)
             _lastSavedChatSubmission.value = it
         }) }
     }
@@ -166,13 +175,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun decrypt(content: String): String = try { if (vaultReady.value) EncryptionManager.decrypt(content) else "" }
         catch (_: VaultUnavailableException) { biometricAuthManager.lock(); "" }
     fun decryptAttachmentBitmap(content: String): Bitmap? = if (vaultReady.value) AttachmentUtils.base64ToBitmap(decrypt(content)) else null
-    fun createNewChat(title: String, initialPrompt: String? = null) = operation { _activeSessionId.value = repository.createNewSession(title, initialPrompt) }
+    fun createNewChat(title: String, initialPrompt: String? = null) {
+        val submitted = draftController.currentForm("chat:new-title")
+        operation {
+            _activeSessionId.value = repository.createNewSession(title, initialPrompt)
+            if (initialPrompt == null) draftController.acknowledge("chat:new-title", submitted) { now, before ->
+                acknowledgeFormFields(now, before, setOf("title")) }
+        }
+    }
     fun deleteSession(id: String) = operation("Conversation removed from this phone's cache. Desktop history is retained.") {
         if (_activeSessionId.value == id) _activeSessionId.value = null
         repository.deleteSession(id)
     }
-    fun saveDocument(name: String, type: String, content: String, tags: String) = operation("Note protected and saved on this phone. It has not been uploaded.") {
-        repository.saveDocument(name, type, content, tags)
+    fun saveDocument(name: String, type: String, content: String, tags: String) {
+        if (!captureDraftBeforeSubmission()) return
+        val submitted = draftController.currentForm("vault")
+        operation("Note protected and saved on this phone. It has not been uploaded.") {
+            val submission = draftController.prepareSubmission("vault", submitted, setOf("title", "content"))
+            repository.saveDocument(name, type, content, tags, draftSubmission = submission)
+            draftController.acknowledge("vault", submitted, submission) { now, before -> acknowledgeFormFields(now, before, setOf("title", "content")) }
+            _documentSaved.value++
+        }
     }
     fun deleteDocument(id: String) = operation {
         if (_selectedDocument.value?.id == id) _selectedDocument.value = null
@@ -241,15 +264,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun unlockWithPin(pin: String) = biometricAuthManager.unlockWithPin(pin)
     fun lockVault() { stopPairingScanner?.invoke(); cancelPairing(); stopMeetingRecording?.invoke(); repository.onLocked(); biometricAuthManager.lock(); _activeSessionId.value = null; _selectedDocument.value = null }
     fun refreshWorkflows() = triggerSync()
-    fun createCapture(text: String, kind: String, location: String, owner: String, dueAt: Long?, channel: String?, attachment: ChatAttachment?) =
+    fun createCapture(text: String, kind: String, location: String, owner: String, dueAt: Long?, channel: String?, attachment: ChatAttachment?, draftRoute: String = "capture") {
+        if (!captureDraftBeforeSubmission()) return
+        val submitted = draftController.currentForm(draftRoute)
         operation("Note saved or queued. Review the desktop's proposed actions; no email or WhatsApp draft has been sent.") {
-            _lastSavedCaptureId.value = repository.createCapture(text, kind, location, owner, dueAt, channel, attachment)
+            val fields = if (draftRoute == "vault") setOf("evidence") else setOf("note", "location", "owner", "deadline", "channel", "evidence")
+            val submission = draftController.prepareSubmission(draftRoute, submitted, fields)
+            _lastSavedCaptureId.value = repository.createCapture(text, kind, location, owner, dueAt, channel, attachment, draftSubmission = submission)
+            draftController.acknowledge(draftRoute, submitted, submission) { now, before -> acknowledgeFormFields(now, before, fields) }
         }
-    fun captureEvidence(attachment: ChatAttachment) = createCapture("Evidence supplied for human review.", "note", "", "", null, null, attachment)
+    }
+    fun captureEvidence(attachment: ChatAttachment) = createCapture("Evidence supplied for human review.", "note", "", "", null, null, attachment, "vault")
     fun updateWorkflowAction(item: WorkflowAction, owner: String, dueAt: Long?, note: String, complete: Boolean) =
-        operation("Action updated on the desktop.") { repository.updateAction(item, owner, dueAt, note, complete) }
+        operation("Action updated on the desktop.") {
+            val route = "action:" + item.id; val submitted = draftController.currentForm(route)
+            repository.updateAction(item, owner, dueAt, note, complete)
+            draftController.acknowledge(route, submitted) { now, before -> acknowledgeFormFields(now, before, setOf("owner", "due", "note", "complete")) }
+        }
     fun saveWorkflowDraft(item: WorkflowDraft, recipient: String, body: String, subject: String) =
-        operation("Internal draft saved for review. No message was sent.") { repository.saveDraft(item, recipient, body, subject) }
+        operation("Internal draft saved for review. No message was sent.") {
+            val route = "workflow-draft:" + item.id; val submitted = draftController.currentForm(route)
+            repository.saveDraft(item, recipient, body, subject)
+            draftController.acknowledge(route, submitted) { now, before -> acknowledgeFormFields(now, before, setOf("recipient", "subject", "body")) }
+        }
     fun acknowledgeFollowUp(id: String) = operation("Follow-up notification acknowledged. The action itself remains open.") { repository.acknowledgeFollowUp(id) }
     private fun configureNotifications(config: DesktopNodeConfig) {
         val enabled = config.backgroundNotificationsEnabled && !config.simulatedNodeEnabled && config.notificationKey.isNotBlank()

@@ -13,9 +13,8 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
 
     @Synchronized
     fun load(): DesktopNodeConfig? {
-        if (!file.baseFile.exists()) return null
-        require(file.baseFile.length() <= 128 * 1024) { "Gateway configuration exceeds its size limit." }
-        val raw = file.readFully()
+        if (!atomicExists(file)) return null
+        val raw = atomicRead(file, 128 * 1024)
         require(raw.size <= 128 * 1024) { "Gateway configuration exceeds its size limit." }
         val data = JSONObject(cipher.decrypt(raw.toString(Charsets.UTF_8)))
         require(data.getInt("version") == 2)
@@ -49,26 +48,41 @@ class SecureConfigStore(context: Context, private val cipher: VaultCipher = Encr
             .put("backgroundNotificationsEnabled", config.backgroundNotificationsEnabled)
             .put("secureClinicalMode", config.secureClinicalMode)
         val bytes = cipher.encrypt(data.toString()).toByteArray(Charsets.UTF_8)
-        beforeCommit()
-        val stream = file.startWrite()
-        try { stream.write(bytes); beforeCommit(); file.finishWrite(stream) }
-        catch (e: Exception) { file.failWrite(stream); throw e }
+        require(bytes.size in 1..128 * 1024)
+        atomicWrite(file, bytes, beforeCommit)
+        check(atomicRead(file, 128 * 1024).contentEquals(bytes))
     }
 
     private val syncFile = AtomicFile(File(context.noBackupFilesDir, "private-ai-last-sync-v1.bin"))
     @Synchronized fun lastSync(config: DesktopNodeConfig): Long {
-        if(config.simulatedNodeEnabled || !config.isPaired || !syncFile.baseFile.exists()) return 0
-        require(syncFile.baseFile.length() <= 4096)
-        val data = JSONObject(cipher.decrypt(syncFile.readFully().toString(Charsets.UTF_8)))
+        if(config.simulatedNodeEnabled || !config.isPaired || !atomicExists(syncFile)) return 0
+        val data = JSONObject(cipher.decrypt(atomicRead(syncFile, 4096).toString(Charsets.UTF_8)))
         return if(data.getString("destination") == com.example.data.network.PairingConfigParser.destinationIdentity(config)) data.getLong("at").coerceAtLeast(0) else 0
     }
     @Synchronized fun recordSync(config: DesktopNodeConfig, at: Long) {
         require(config.isPaired && !config.simulatedNodeEnabled && at > 0)
         val data = JSONObject().put("destination", com.example.data.network.PairingConfigParser.destinationIdentity(config)).put("at", at)
         val bytes = cipher.encrypt(data.toString()).toByteArray(Charsets.UTF_8)
-        val stream = syncFile.startWrite()
-        try { stream.write(bytes); syncFile.finishWrite(stream) }
-        catch(e: Exception) { syncFile.failWrite(stream); throw e }
+        require(bytes.size in 1..4096)
+        atomicWrite(syncFile, bytes, {})
+        check(atomicRead(syncFile, 4096).contentEquals(bytes))
+    }
+    internal fun hasProtectedFiles(): Boolean = atomicExists(file) || atomicExists(syncFile)
+
+    /** Preserve exact decrypted JSON/identity while moving its authenticated key format. */
+    @Synchronized internal fun rewrapForPolicy(rewrite: (String) -> String, checkAccess: () -> Unit) {
+        for ((protectedFile, limit) in listOf(file to 128 * 1024, syncFile to 4096)) {
+            checkAccess()
+            if (!atomicExists(protectedFile)) continue
+            val before = atomicRead(protectedFile, limit).toString(Charsets.UTF_8)
+            val after = rewrite(before)
+            checkAccess()
+            val replacement = after.toByteArray(Charsets.UTF_8)
+            require(replacement.size in 1..limit) { "Converted protected file exceeds its supported size." }
+            if (after != before) atomicWrite(protectedFile, replacement, checkAccess)
+            checkAccess()
+            check(atomicRead(protectedFile, limit).toString(Charsets.UTF_8) == after)
+        }
     }
     @Synchronized fun clear() { file.delete(); syncFile.delete() }
 }

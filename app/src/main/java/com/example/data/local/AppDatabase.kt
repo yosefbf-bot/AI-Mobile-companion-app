@@ -15,8 +15,8 @@ import com.example.data.local.entity.*
 @Database(
     entities = [EncryptedChatSession::class, EncryptedChatMessage::class,
         EncryptedDocument::class, DesktopTask::class, DesktopNotification::class,
-        PendingOperation::class],
-    version = 4,
+        PendingOperation::class, LocalDraft::class, LocalDraftEvidence::class],
+    version = 5,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,6 +24,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun documentDao(): DocumentDao
     abstract fun taskDao(): TaskDao
     abstract fun pendingOperationDao(): PendingOperationDao
+    abstract fun localDraftDao(): LocalDraftDao
 
     /** Content is migrated only after device authentication, in one rollback-safe transaction. */
     suspend fun migrateLegacyContent(cipher: VaultCipher): MigrationOutcome =
@@ -76,6 +77,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS local_drafts (
+                    id TEXT NOT NULL PRIMARY KEY, revision INTEGER NOT NULL, deleted INTEGER NOT NULL,
+                    encryptedFields TEXT, evidenceId TEXT, updatedAt INTEGER NOT NULL, deleteGeneration INTEGER NOT NULL)""")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS local_draft_evidence (
+                    id TEXT NOT NULL PRIMARY KEY, encryptedPayload TEXT NOT NULL, ciphertextSha256 TEXT NOT NULL)""")
+            }
+        }
+
         /** Unsupported schemas fail without deleting the database. No destructive fallback. */
         fun getInstance(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: build(context, "private_ai_vault.db").also { instance = it }
@@ -88,6 +99,6 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_2_3, MIGRATION_3_4).build()
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
     }
 }

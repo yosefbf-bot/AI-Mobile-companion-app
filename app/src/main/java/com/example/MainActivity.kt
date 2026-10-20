@@ -55,6 +55,15 @@ import androidx.compose.ui.platform.testTag
 import androidx.fragment.app.FragmentActivity
 import androidx.biometric.BiometricPrompt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import com.example.ui.AuthenticationCompletion
+import com.example.ui.components.LocalDraftForm
+import com.example.data.crypto.DeviceScreenLock
+import com.example.data.crypto.DeviceScreenLockState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import com.example.ui.MainViewModel
 import com.example.ui.UnlockPromptState
 import com.example.data.crypto.BiometricStatus
@@ -96,6 +105,11 @@ class MainActivity : FragmentActivity() {
     private val viewModel: MainViewModel by viewModels()
     private val unlockPromptState: UnlockPromptState by viewModels()
     private var biometricPrompt: BiometricPrompt? = null
+    private var authenticationCompletion: AuthenticationCompletion? = null
+    private var authenticationCompletionJob: Job? = null
+    private var sessionChangeJob: Job? = null
+    private var sessionChangeError by mutableStateOf<String?>(null)
+    private var screenLockState by mutableStateOf(DeviceScreenLockState.UNAVAILABLE)
     private var resumedForAuthentication by mutableStateOf(false)
     private val screenCapturePreferences by lazy { ScreenCapturePreferences(this) }
     private var allowScreenshots by mutableStateOf(false)
@@ -173,10 +187,37 @@ class MainActivity : FragmentActivity() {
     private fun authenticateWhenReady() {
         EncryptionManager.hasCurrentAccess()
         val ready = authenticationForegroundReady()
-        if (unlockPromptState.takeAuthenticated(ready)) {
-            if (!viewModel.biometricAuthManager.completeDeviceCredentialAuthentication()) {
-                unlockPromptState.onFailure("The protected vault key could not be unlocked. Existing data was preserved.", terminal = true)
+        val completion = unlockPromptState.beginCompletion(ready)
+        if (completion != null) {
+            authenticationCompletion = completion
+            val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val granted = viewModel.biometricAuthManager.completeDeviceCredentialAuthentication(
+                        completion.requestedSessionMinutes,
+                        beforeGrant = {
+                            authenticationForegroundReady() && DeviceScreenLock.read(this@MainActivity) == DeviceScreenLockState.SECURE_UNLOCKED &&
+                                authenticationCompletion == completion && unlockPromptState.isCurrentCompletion(completion)
+                        })
+                    if (granted) unlockPromptState.finishCompletion(completion)
+                    else if (!authenticationForegroundReady()) unlockPromptState.deferCompletion(completion)
+                    else unlockPromptState.failCompletion(completion,
+                        "The protected workspace could not be unlocked. Existing data and drafts were preserved.")
+                } catch (canceled: CancellationException) {
+                    unlockPromptState.deferCompletion(completion)
+                    throw canceled
+                } catch (_: Exception) {
+                    unlockPromptState.failCompletion(completion,
+                        "The protected workspace could not be unlocked. Existing data and drafts were preserved.")
+                } finally {
+                    unlockPromptState.deferCompletion(completion)
+                    if (authenticationCompletion == completion) {
+                        authenticationCompletion = null
+                        authenticationCompletionJob = null
+                    }
+                }
             }
+            authenticationCompletionJob = job
+            job.start()
         } else if (unlockPromptState.beginAutomatic(!viewModel.isUnlocked.value, ready)) {
             launchAuthentication()
         }
@@ -184,7 +225,8 @@ class MainActivity : FragmentActivity() {
 
     private fun launchAuthentication() {
         val auth = viewModel.biometricAuthManager
-        if (auth.checkBiometricAvailability() != BiometricStatus.AVAILABLE) {
+        screenLockState = DeviceScreenLock.read(this)
+        if (screenLockState != DeviceScreenLockState.SECURE_UNLOCKED || auth.checkBiometricAvailability() != BiometricStatus.AVAILABLE) {
             unlockPromptState.onFailure("Set up this phone's Android screen lock in device security settings, then try again.", terminal = true)
             return
         }
@@ -193,8 +235,11 @@ class MainActivity : FragmentActivity() {
                 val intent = auth.deviceCredentialIntent()
                 if (intent == null) unlockPromptState.onFailure("Android device authentication is unavailable. Check device security settings.", terminal = true)
                 else deviceCredential.launch(intent)
-            } else biometricPrompt?.let { auth.promptBiometricAuth(it) }
-                ?: unlockPromptState.onFailure("Device authentication is unavailable. Try again.", terminal = true)
+            } else {
+                val prompt = bindAuthenticationPrompt()
+                biometricPrompt = prompt
+                auth.promptBiometricAuth(prompt)
+            }
         } catch (_: IllegalStateException) {
             unlockPromptState.onFailure("Device authentication could not open safely. Try again.", terminal = true)
         } catch (_: android.content.ActivityNotFoundException) {
@@ -205,23 +250,39 @@ class MainActivity : FragmentActivity() {
     override fun onPostResume() {
         super.onPostResume()
         resumedForAuthentication = true
+        screenLockState = DeviceScreenLock.read(this)
         authenticateWhenReady()
         applyScreenCapturePolicy()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus && resumedForAuthentication) authenticateWhenReady()
+        if (hasFocus && resumedForAuthentication) {
+            screenLockState = DeviceScreenLock.read(this)
+            authenticateWhenReady()
+        }
     }
 
     override fun onPause() {
+        viewModel.draftController.captureBeforeLock()
         resumedForAuthentication = false
         // Protect the app before Android can snapshot its background transition.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        deferAuthenticationCompletion()
+        sessionChangeJob?.cancel()
+        sessionChangeJob = null
         super.onPause()
     }
 
+    private fun deferAuthenticationCompletion() {
+        authenticationCompletion?.let(unlockPromptState::deferCompletion)
+        authenticationCompletion = null
+        authenticationCompletionJob?.cancel()
+        authenticationCompletionJob = null
+    }
+
     override fun onStop() {
+        deferAuthenticationCompletion()
         lockProtectedWorkspace()
         unlockPromptState.onStopped(isChangingConfigurations)
         super.onStop()
@@ -247,22 +308,61 @@ class MainActivity : FragmentActivity() {
         applyScreenCapturePolicy()
     }
 
+    private fun requestSessionChange(minutes: Int) {
+        screenLockState = DeviceScreenLock.read(this)
+        if (minutes !in setOf(5, 10, 20, 30) || minutes == EncryptionManager.committedSessionMinutes.value ||
+            sessionChangeJob != null || !authenticationForegroundReady() ||
+            screenLockState != DeviceScreenLockState.SECURE_UNLOCKED || !EncryptionManager.hasCurrentAccess() || !viewModel.vaultReady.value) return
+        val generation = EncryptionManager.accessGeneration
+        sessionChangeError = null
+        if (!viewModel.draftController.captureBeforeLock()) {
+            sessionChangeError = "The latest draft could not be protected. Keep this app open and retry before changing the unlock period."
+            return
+        }
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                if (!viewModel.draftController.flush()) {
+                    sessionChangeError = "Drafts could not be saved. Keep this app open and retry before changing the unlock period."
+                    return@launch
+                }
+                if (!authenticationForegroundReady() || DeviceScreenLock.read(this@MainActivity) != DeviceScreenLockState.SECURE_UNLOCKED ||
+                    generation != EncryptionManager.accessGeneration || !viewModel.vaultReady.value ||
+                    !unlockPromptState.prepareSessionChange(minutes)) return@launch
+                // No discard: both durable drafts and encrypted RAM fallback participate in migration.
+                lockProtectedWorkspace()
+                authenticate()
+            } finally { if (sessionChangeJob === coroutineContext[Job]) sessionChangeJob = null }
+        }
+        sessionChangeJob = job
+        job.start()
+    }
+
     private fun lockProtectedWorkspace() {
+        viewModel.draftController.captureBeforeLock()
         scanningPairing = false
         // Protect locked recents synchronously; Compose collection can pause at Stop.
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         viewModel.lockVault()
     }
 
+    private fun bindAuthenticationPrompt(): BiometricPrompt = viewModel.biometricAuthManager.createBiometricPrompt(this,
+            onAuthenticated = ::onDeviceAuthenticated,
+            onError = {
+                // AndroidX rebinds the callback on recreation. An abandoned prompt must not lock a newer grant.
+                if (unlockPromptState.promptInProgress && !viewModel.isUnlocked.value) {
+                    deferAuthenticationCompletion()
+                    viewModel.biometricAuthManager.lock()
+                    unlockPromptState.onFailure(it, terminal = true)
+                }
+            },
+            onFailed = { unlockPromptState.onFailure(it, terminal = false) })
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
         allowScreenshots = screenCapturePreferences.readAllowed()
-        biometricPrompt = viewModel.biometricAuthManager.createBiometricPrompt(this,
-            onAuthenticated = ::onDeviceAuthenticated,
-            onError = { unlockPromptState.onFailure(it, terminal = true) },
-            onFailed = { unlockPromptState.onFailure(it, terminal = false) })
+        biometricPrompt = bindAuthenticationPrompt()
         enableEdgeToEdge()
 
         setContent {
@@ -291,6 +391,10 @@ class MainActivity : FragmentActivity() {
                 val notifications by viewModel.notifications.collectAsStateWithLifecycle()
                 val feedbackMessage by viewModel.userFeedback.collectAsStateWithLifecycle()
                 val secureClinicalMode by viewModel.secureClinicalMode.collectAsStateWithLifecycle()
+                val sessionMinutes by EncryptionManager.committedSessionMinutes.collectAsStateWithLifecycle()
+                val sessionPolicyError by EncryptionManager.sessionPolicyChangeError.collectAsStateWithLifecycle()
+                val autoSaveDrafts by viewModel.draftController.autoSave.collectAsStateWithLifecycle()
+                val documentSaved by viewModel.documentSaved.collectAsStateWithLifecycle()
                 val modelMode by viewModel.modelProcessingMode.collectAsStateWithLifecycle()
                 val isStreamingResponse by viewModel.isStreamingResponse.collectAsStateWithLifecycle()
                 val lastSavedChatSubmission by viewModel.lastSavedChatSubmission.collectAsStateWithLifecycle()
@@ -385,6 +489,7 @@ class MainActivity : FragmentActivity() {
                             onResourcesChanged = { viewModel.stopPairingScanner = it })
                     } else if (activeSessionId != null) {
                         // Detailed Chat Screen with Voice, Streaming, Attachments, Model Indicator
+                        LocalDraftForm(viewModel.draftController, chatRoute) { draft ->
                         ChatDetailScreen(
                             session = activeSession,
                             messages = activeSessionMessages,
@@ -409,9 +514,10 @@ class MainActivity : FragmentActivity() {
                             onTakePhoto = { takePhoto(chatRoute) },
                             incomingEvidence = pendingEvidence?.takeIf { it.route == chatRoute }?.attachment,
                             onConsumeEvidence = viewModel::clearPendingEvidence,
-                            loadUnsentDraft = { viewModel.restoreUnsentDraft(chatRoute) },
-                            onUnsentDraftChange = { viewModel.saveUnsentDraft(chatRoute, it) }
+                            loadUnsentDraft = { draft.form }, draftState = draft,
+                            onDraftFieldsChange = draft::update
                         )
+                        }
                     } else {
                         // Main Scaffold with 5 Core Navigation Sections (Home, Chat, Tasks, Alerts, Files)
                         Scaffold(
@@ -535,6 +641,7 @@ class MainActivity : FragmentActivity() {
                                     )
 
                                     ScreenTab.CHAT -> ChatListScreen(
+                                        draftController = viewModel.draftController,
                                         sessions = chatSessions,
                                         decryptText = { viewModel.decrypt(it) },
                                         onSessionClick = { viewModel.selectSession(it) },
@@ -564,10 +671,11 @@ class MainActivity : FragmentActivity() {
                                         onMarkAllRead = { viewModel.markAllNotificationsRead() }
                                     )
 
-                                    ScreenTab.FILES -> DocumentVaultScreen(
+                                    ScreenTab.FILES -> LocalDraftForm(viewModel.draftController, "vault") { draft -> DocumentVaultScreen(
                                         documents = documents,
                                         lastSavedCaptureId = lastSavedCaptureId,
                                         decryptText = { viewModel.decrypt(it) },
+                                        documentSaved = documentSaved,
                                         onSaveDocument = { name, type, content, tags ->
                                             viewModel.saveDocument(name, type, content, tags)
                                         },
@@ -577,12 +685,12 @@ class MainActivity : FragmentActivity() {
                                         onTakePhoto = { takePhoto("vault") },
                                         incomingEvidence = pendingEvidence?.takeIf { it.route == "vault" }?.attachment,
                                         onConsumeEvidence = viewModel::clearPendingEvidence,
-                                        loadUnsentDraft = { viewModel.restoreUnsentDraft("vault") },
-                                        onUnsentDraftChange = { viewModel.saveUnsentDraft("vault", it) },
+                                        loadUnsentDraft = { draft.form }, draftState = draft,
+                                        onDraftFieldsChange = draft::update,
                                         onSendDocToChat = { title, content ->
                                             viewModel.createNewChat("Doc: $title", "Analyze this report:\n\n$content")
                                         }
-                                    )
+                                    ) }
 
                                     ScreenTab.SETTINGS -> NodeSettingsScreen(
                                         appearance = appearance,
@@ -592,6 +700,9 @@ class MainActivity : FragmentActivity() {
                                         secureClinicalMode = secureClinicalMode,
                                         allowScreenshots = allowScreenshots,
                                         onAllowScreenshotsChange = ::updateAllowScreenshots,
+                                        sessionMinutes = sessionMinutes, onRequestSessionMinutesChange = ::requestSessionChange,
+                                        screenLockState = screenLockState, sessionPolicyError = sessionChangeError ?: sessionPolicyError,
+                                        autoSaveDrafts = autoSaveDrafts, onAutoSaveDraftsChange = viewModel.draftController::setAutoSave,
                                         onSaveConfig = {
                                             viewModel.updateNodeConfig(it)
                                             if (it.backgroundNotificationsEnabled) requestNotificationPermission()
@@ -605,12 +716,13 @@ class MainActivity : FragmentActivity() {
                                         onScanPairingQr = { scanningPairing = true }
                                     )
 
-                                    ScreenTab.CAPTURE -> FacilityCaptureScreen(
+                                    ScreenTab.CAPTURE -> LocalDraftForm(viewModel.draftController, "capture") { draft -> FacilityCaptureScreen(
                                         snapshot = workflowState,
                                         lastSavedCaptureId = lastSavedCaptureId,
                                         busy = workflowBusy,
                                         error = vaultError,
-                                        onCapture = viewModel::createCapture,
+                                        onCapture = { text, kind, location, owner, due, channel, evidence -> viewModel.createCapture(text, kind, location, owner, due, channel, evidence) },
+                                        draftController = viewModel.draftController,
                                         onRefresh = viewModel::refreshWorkflows,
                                         onUpdateAction = viewModel::updateWorkflowAction,
                                         onSaveDraft = viewModel::saveWorkflowDraft,
@@ -620,9 +732,9 @@ class MainActivity : FragmentActivity() {
                                         onTakePhoto = { takePhoto("capture") },
                                         incomingEvidence = pendingEvidence?.takeIf { it.route == "capture" }?.attachment,
                                         onConsumeEvidence = viewModel::clearPendingEvidence,
-                                        loadUnsentDraft = { viewModel.restoreUnsentDraft("capture") },
-                                        onUnsentDraftChange = { viewModel.saveUnsentDraft("capture", it) }
-                                    )
+                                        loadUnsentDraft = { draft.form }, draftState = draft,
+                                        onDraftFieldsChange = draft::update
+                                    ) }
                                 }
                             }
                         }

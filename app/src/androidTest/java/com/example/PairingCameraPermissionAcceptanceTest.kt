@@ -5,7 +5,7 @@ import android.content.pm.PackageManager
 import android.view.WindowManager
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -94,12 +94,14 @@ class PairingCameraPermissionAcceptanceTest {
         // visibility and progress rather than retrying until the heap is full.
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
         settleSettingsScroll()
-        listOf("10", "20", "30", "off").forEach { tag ->
+        listOf("10", "20", "30").forEach { tag ->
             showSettingsControl("session_mode_" + tag, direction = 1f)
-            rule.onNodeWithTag("session_mode_" + tag).assertIsNotEnabled()
+            rule.onNodeWithTag("session_mode_" + tag).assertIsEnabled()
         }
+        rule.onNodeWithTag("session_mode_off").assertDoesNotExist()
         showSettingsControl("session_mode_5", direction = -1f)
-        rule.onNodeWithTag("session_mode_5").assertIsSelected()
+        rule.onNodeWithTag("session_mode_5").assertIsEnabled().assertIsSelected()
+        assertEquals(5, EncryptionManager.committedSessionMinutes.value)
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(2)
         settleSettingsScroll()
         showSettingsControl("scan_pairing_qr", direction = 1f)

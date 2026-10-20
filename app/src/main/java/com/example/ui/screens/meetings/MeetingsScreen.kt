@@ -22,12 +22,19 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun MeetingsScreen(viewModel: MainViewModel) {
+    com.example.ui.components.LocalDraftForm(viewModel.draftController, "meeting:new-title") { draft -> MeetingsContent(viewModel, draft) }
+}
+
+@Composable
+private fun MeetingsContent(viewModel: MainViewModel, draft: com.example.ui.components.LocalDraftFormState) {
     val local by viewModel.repository.phoneMeetings.collectAsStateWithLifecycle()
     val remote by viewModel.repository.desktopMeetings.collectAsStateWithLifecycle()
     val pending by viewModel.repository.meetingPending.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var title by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf(com.example.ui.components.unsentForm(draft.form).optString("title")) }
+    fun fields() = org.json.JSONObject().put("title", title).toString()
+    com.example.ui.components.CaptureLatestDraft(draft) { fields() to null }
     var activeId by remember { mutableStateOf<String?>(null) }
     var recorder by remember { mutableStateOf<MeetingRecorder?>(null) }
     var recordingJob by remember { mutableStateOf<Job?>(null) }
@@ -48,11 +55,18 @@ fun MeetingsScreen(viewModel: MainViewModel) {
             permission.launch(Manifest.permission.RECORD_AUDIO); return
         }
         if (busy || recorder != null) return
+        draft.update(fields())
+        val submittedTitle = title
+        val submittedForm = fields()
         busy = true
         recordingJob = scope.launch {
             var mic: MeetingRecorder? = null
             try {
-                val sourceId = id ?: viewModel.repository.createMeeting(title)
+                val sourceId = id ?: viewModel.repository.createMeeting(submittedTitle).also {
+                    viewModel.draftController.acknowledge("meeting:new-title", submittedForm) { now, before ->
+                        com.example.ui.components.acknowledgeFormFields(now, before, setOf("title")) }
+                    if (title == submittedTitle) { title = ""; draft.update(fields()) }
+                }
                 activeId = sourceId
                 mic = MeetingRecorder(); recorder = mic; busy = false
                 viewModel.stopMeetingRecording = { recorder?.stop(); recordingJob?.cancel() }
@@ -69,7 +83,7 @@ fun MeetingsScreen(viewModel: MainViewModel) {
         Text("Meetings", style = MaterialTheme.typography.headlineMedium)
         Text("Record here. Your PC transcribes offline and prepares draft notes and follow-ups. Get participants' consent before recording.")
         Text("Keep the app unlocked and this screen open. Navigation, backgrounding or the security timeout stops recording; up to 20 seconds not yet saved can be lost. Resume after unlocking. Limit: 60 minutes per meeting.", style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(title, { title = it.take(150) }, label = { Text("Title (optional)") }, enabled = recorder == null && !busy, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(title, { title = it.take(150); draft.update(fields()) }, label = { Text("Title (optional)") }, enabled = recorder == null && !busy, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { start(null) }, enabled = recorder == null && !busy) { Text("Record new meeting") }
             if (recorder != null) OutlinedButton(onClick = { busy = true; recorder?.stop() }, enabled = !busy) { Text("Pause") }

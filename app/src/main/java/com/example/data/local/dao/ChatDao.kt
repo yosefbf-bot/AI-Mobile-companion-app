@@ -12,6 +12,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChatDao {
+
+    @Query("SELECT * FROM chat_sessions WHERE (:after IS NULL OR id > :after) ORDER BY id LIMIT :limit")
+    suspend fun sessionsAfter(after: String?, limit: Int): List<EncryptedChatSession>
+    @Query("SELECT * FROM chat_messages WHERE (:after IS NULL OR id > :after) ORDER BY id LIMIT :limit")
+    suspend fun messagesAfter(after: String?, limit: Int): List<EncryptedChatMessage>
+
     @Transaction
     suspend fun replaceSyncedHistory(sessionId: String, rows: List<EncryptedChatMessage>) {
         require(rows.all { it.sessionId == sessionId && it.status == "SYNCED_DESKTOP" })

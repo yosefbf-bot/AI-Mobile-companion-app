@@ -1,3 +1,118 @@
+# Actual manual-retry fixture synchronization — October 19, 2026
+
+Source `6f3f86f6e83ff8bd60c305863160376d50a6b2a7`, run `39346236095`,
+records 172 unit passes, the same two named external-fixture skips and zero lint
+errors. Eleven of twelve actual device cases passed without skips. The sole
+failure was the new long case's manual re-unlock helper: it did not find the
+genuine credential screen after checking the app's retry button only once.
+Bounded scrolling, actual elapsed time, protected five-MiB draft reads/writes
+and manual revocation were reached; normal-authenticated five-minute cleanup
+succeeded. Manual lock intentionally requires the existing Try again action.
+The focused fixture correction waits for its real displayed/enabled button,
+clicks once and retains the original genuine OS PIN assertion. This evidence
+does not establish a production authentication defect or full acceptance.
+The corrected exact-head PR and main still require all twelve actual cases.
+
+# Actual device-test scrolling correction — October 19, 2026
+
+Exact source `e585f0e465ffd37201ed4084312d4b59afa6457a`, PR run
+`39340887493`, records 172 unit passes, the two existing named external-fixture
+skips, lint with zero errors, and one actual pre-PIN secure-screen-lock rejection
+pass. The normal eleven-case phase did not finish: the job reached its timeout.
+Preserved synthetic logcat identifies the first failure at the manual-lock UI
+step: `ActionsKt.scrollToNode` / `performScrollTo`, called by
+`LongForegroundSessionAcceptanceTest.kt:203`, exhausted the test process heap.
+This is not twelve-case acceptance. The correction replaces recursive test
+scrolling with bounded explicit scrolling to the same actual Settings controls;
+all real authentication, elapsed-time, evidence and migration assertions remain.
+The retained camera-permission case also updates its obsolete disabled-placeholder
+expectations: secure-phone sessions now expose enabled 10/20/30 choices, retain
+selected default5 and have no indefinite Off option. Its case identity, actual
+camera-denial/manual-pairing and background-revocation assertions are retained.
+The corrected exact-head PR and main still require full fresh validation.
+Owner installations and data remain untouched.
+
+# First hosted secure-session validation — October 19, 2026
+
+PR #11 is the review path for 1.2.4-dev/code7. First run `39336932981`
+at `b2cda1d7568f51dab5893e4f92bbe8f0bed61511` built the production debug APK,
+compiled unit tests and exported the genuine Room5 schema. Unit XML records
+173 cases: 165 passed, six failed, two named external desktop-fixture skips.
+Lint and actual-device execution were not reached; this run is not acceptance.
+The failed raw archive/logs are retained locally with API digest, size and CRC
+verification. Schema5 is preserved from that exact KSP artifact, not fabricated;
+all six prior entities remain unchanged and the two new tables match migration SQL.
+
+Before merge, the next candidate must address all six failures and the independently
+reviewed older-partial draft acknowledgment correction. Its causal regression
+brings the source inventory to 174 unit cases (172 expected passes and the two
+existing named external skips), plus all twelve actual-device cases without skips.
+The latest exact-head PR and main checks and their raw reports are authoritative;
+this static document does not certify a later commit. Keep the first failures and
+do not weaken the full gate, remove tests or claim owner-phone acceptance.
+
+# Secure phone sessions and encrypted local auto-drafts — October 19, 2026
+
+Current development branch `chatgpt/secure-unlock-autodrafts-2026-10-19` starts
+from accepted screenshot main `5dc5501b770cb09d1e86a9fe4ef9d5fd86639b45`.
+Current candidate version: **1.2.4-dev / code 7** (original app ID and signer).
+The owner authorized 5 (default), 10, 20 and 30 minute foreground sessions and
+requires an actual secure Android phone screen lock. None/Swipe, unavailable
+security state and a currently locked phone fail closed. Changes require fresh
+Android authentication; phone lock, backgrounding, Lock now and security expiry
+still revoke access. There is no indefinite Off option, application PIN bypass,
+typing/polling renewal or exported key. Existing data/keys/pairings are preserved
+through recoverable authenticated policy migration before workspace readiness.
+
+The owner's later auto-draft instruction replaces the earlier discard proposal:
+**changing a timeout never asks to discard or clears unfinished work**. Settings
+has one default-on **Auto-save drafts** control. Draft text and evidence stay
+encrypted on this phone and never auto-send or sync to the desktop. Turning it
+off retains existing saved drafts; explicit Delete draft requires confirmation
+and protects newer revisions against stale autosave callbacks. Failed saves
+remain visible and RAM fallback is not described as durable storage.
+
+Chats, Notes, manual Library documents, new chat/meeting titles, action edits and
+internal recipient/subject/body edits reuse one local draft controller. Pairing
+links and search queries are excluded; meeting audio already uses its existing
+durable chunk outbox. Restore/loading gates precede editable composition. Small
+text fields and stable evidence references avoid rebuilding multi-megabyte
+attachment JSON on each keystroke. The core coalesces encrypted writes and uses
+bounded evidence/body hydration. Successful durable Send/Save acknowledgments
+clear only unchanged submitted fields, including with auto-save off; encrypted
+transaction receipts reconcile commits that cross lock/restart. Other edits and
+failed submissions remain. Screenshot preference/clinical policy stay separate.
+
+**Current-source validation is pending.** Fourteen new UI behavioral unit cases
+are authored (prompt attempt ownership, working choices/phone-lock capability,
+preferences/conditional acknowledgments, actual Compose+Room restore/delete
+races), retaining existing unit identities. All ten prior device cases remain
+unchanged; two new actual cases bring the required inventory to twelve: a fresh
+pre-PIN unprotected-phone rejection, then a real OS-authenticated session beyond
+300 seconds, five-MiB unsent and saved/pending evidence hydration, lock revocation
+and normal authenticated migration back to five minutes. These are authored
+assertions, not passes. No local emulator, phone installation or CI execution
+was performed by this UI implementation step. Coherent build/unit/lint and all
+twelve hosted actual-device cases remain required; core test totals/results will
+be recorded from real output after the joint source freeze.
+
+After the schema 4-to-5 and opt-in PAI3 storage upgrade, an older APK is not
+an in-place rollback. Returning to five minutes restores the original cipher
+format, not Room schema 4. Update over the same application ID with the original
+signer; never uninstall or clear app data to recover. Preserve keys and pairing,
+and use a compatible corrected update if recovery is required. Old APKs remain
+reference evidence, and the owner's installed app is unchanged.
+
+The owner deferred hands-on phone/OEM testing, not our verification. Background
+follow-up notices remain Android-scheduled best effort (15-minute minimum,
+Doze/battery/network/PC reachability can delay them); they are not guaranteed
+immediate alerts. Owner-phone/OEM, live accounts, microphone, notifications,
+LAN, reboot and installed-app upgrade acceptance remain unperformed/deferred.
+No cloud/relay/dependency/signing identity or owner installation is added.
+
+---
+Prior accepted and failed-run evidence follows unchanged.
+
 ## Screenshot device-fixture follow-up — October 19, 2026
 
 Run39305305505 atc44fe16:116 hosted unit passes, two named unavailable desktop-fixture

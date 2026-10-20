@@ -12,6 +12,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TaskDao {
+
+    @Query("SELECT * FROM desktop_tasks WHERE (:after IS NULL OR id > :after) ORDER BY id LIMIT :limit")
+    suspend fun tasksAfter(after: String?, limit: Int): List<DesktopTask>
+    @Query("SELECT * FROM desktop_notifications WHERE (:after IS NULL OR id > :after) ORDER BY id LIMIT :limit")
+    suspend fun notificationsAfter(after: String?, limit: Int): List<DesktopNotification>
+
     @Query("SELECT * FROM desktop_tasks")
     suspend fun allTasksForMigration(): List<DesktopTask>
 

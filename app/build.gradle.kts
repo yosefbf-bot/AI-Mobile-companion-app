@@ -16,8 +16,8 @@ android {
     applicationId = "com.aistudio.privateai.kq7zwa"
     minSdk = 24
     targetSdk = 36
-    versionCode = 6
-    versionName = "1.2.3-dev"
+    versionCode = 7
+    versionName = "1.2.4-dev"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

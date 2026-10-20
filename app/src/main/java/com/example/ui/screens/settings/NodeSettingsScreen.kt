@@ -2,6 +2,10 @@ package com.example.ui.screens.settings
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.Role
+import com.example.data.crypto.DeviceScreenLockState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -27,7 +31,11 @@ fun NodeSettingsScreen(
     appearance: Appearance = Appearance.DARK, onAppearanceChange: (Appearance) -> Unit = {},
     pairingState: PairingUiState = PairingUiState(), onPairLink: (String) -> Unit = {},
     onScanPairingQr: () -> Unit = {}, onCancelPairing: () -> Unit = {},
-    allowScreenshots: Boolean = false, onAllowScreenshotsChange: (Boolean) -> Unit = {}
+    allowScreenshots: Boolean = false, onAllowScreenshotsChange: (Boolean) -> Unit = {},
+    sessionMinutes: Int = 5, onRequestSessionMinutesChange: (Int) -> Unit = {},
+    screenLockState: DeviceScreenLockState = DeviceScreenLockState.UNAVAILABLE,
+    sessionPolicyError: String? = null,
+    autoSaveDrafts: Boolean = true, onAutoSaveDraftsChange: (Boolean) -> Unit = {}
 ) {
     var pairingText by remember { mutableStateOf("") }
     DisposableEffect(Unit) { onDispose { pairingText = "" } }
@@ -140,14 +148,34 @@ fun NodeSettingsScreen(
                 }
             }
             Text("Require unlock again while actively using the app:")
-            listOf("5 minutes" to "5", "10 minutes" to "10", "20 minutes" to "20", "30 minutes" to "30", "Off while active" to "off").forEach { (label, tag) ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = tag == "5", onClick = {}, enabled = tag == "5",
-                        modifier = Modifier.testTag("session_mode_" + tag))
-                    Text(label, modifier = Modifier.testTag("session_label_" + tag))
+            val canChangeSession = screenLockState == DeviceScreenLockState.SECURE_UNLOCKED
+            Column(Modifier.selectableGroup()) {
+                listOf(5, 10, 20, 30).forEach { minutes ->
+                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("session_mode_" + minutes)
+                        .selectable(selected = sessionMinutes == minutes, enabled = canChangeSession,
+                            role = Role.RadioButton,
+                            onClick = { if (minutes != sessionMinutes) onRequestSessionMinutesChange(minutes) }),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = sessionMinutes == minutes, onClick = null, enabled = canChangeSession,
+                            modifier = Modifier.testTag("session_radio_" + minutes))
+                        Text("$minutes minutes", modifier = Modifier.testTag("session_label_" + minutes))
+                    }
                 }
             }
-            Text("Five minutes from Android authentication is the current security limit, even while you keep using the app. Longer sessions and Off need a verified protected-storage upgrade and are unavailable. Your existing keys and saved records are unchanged.", style = MaterialTheme.typography.bodySmall)
+            if (!canChangeSession) Text(
+                if (screenLockState == DeviceScreenLockState.SECURE_LOCKED) "Unlock this phone before changing the unlock period."
+                else "Set up a secure Android phone screen lock (PIN, password or pattern) before changing the unlock period.",
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("session_screen_lock_requirement"))
+            Text("Changes require fresh Android authentication. Your drafts stay on this phone. The selected option shows the saved active-use limit.", style = MaterialTheme.typography.bodySmall)
+            sessionPolicyError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("session_policy_error")) }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Switch(autoSaveDrafts, onCheckedChange = onAutoSaveDraftsChange,
+                    modifier = Modifier.testTag("auto_save_drafts_switch").semantics { contentDescription = "Auto-save drafts" })
+                Column {
+                    Text("Auto-save drafts")
+                    Text("Save unfinished work on this phone. Drafts are encrypted and never sent or synced automatically. Turning this off keeps existing saved drafts.", style = MaterialTheme.typography.bodySmall)
+                }
+            }
             Text("Backgrounding, phone lock, Lock now and Android security expiry can require unlock sooner. Polling and typing do not extend the session.", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Switch(secureClinicalMode, onCheckedChange = onToggleSecureClinicalMode,

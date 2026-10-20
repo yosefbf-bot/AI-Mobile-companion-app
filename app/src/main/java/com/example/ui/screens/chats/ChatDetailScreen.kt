@@ -113,6 +113,8 @@ fun ChatDetailScreen(
     onPickEvidence: ((String) -> Unit)? = null, onTakePhoto: (() -> Unit)? = null,
     incomingEvidence: ChatAttachment? = null, onConsumeEvidence: () -> Unit = {},
     loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
+    draftState: LocalDraftFormState? = null,
+    onDraftFieldsChange: ((String, ChatAttachment?) -> Unit)? = null,
     isRequestRunning: Boolean = false,
     lastSavedSubmission: ChatSubmissionReceipt? = null,
     submissionFinished: Long = 0,
@@ -131,7 +133,13 @@ fun ChatDetailScreen(
     val restored = remember(session?.id) { unsentForm(loadUnsentDraft()) }
     var messageInput by remember(session?.id) { mutableStateOf(restored.optString("text")) }
     var currentAttachment by remember(session?.id) { mutableStateOf(formAttachment(restored)) }
-    LaunchedEffect(messageInput,currentAttachment) { onUnsentDraftChange(JSONObject().put("text",messageInput).put("evidence",attachmentForm(currentAttachment)).toString()) }
+    fun draftFields() = JSONObject().put("text", messageInput).toString()
+    fun saveDraftFields() {
+        onDraftFieldsChange?.invoke(draftFields(), currentAttachment)
+            ?: onUnsentDraftChange(JSONObject(draftFields()).put("evidence", attachmentForm(currentAttachment)).toString())
+    }
+    CaptureLatestDraft(draftState) { draftFields() to currentAttachment }
+    LaunchedEffect(messageInput, currentAttachment) { saveDraftFields() }
     LaunchedEffect(incomingEvidence) { incomingEvidence?.let { currentAttachment = it; onConsumeEvidence() } }
     var showAttachmentSheet by remember { mutableStateOf(false) }
     var showModeDropdown by remember { mutableStateOf(false) }
@@ -361,7 +369,7 @@ fun ChatDetailScreen(
                             }
 
                             IconButton(
-                                onClick = { currentAttachment = null },
+                                onClick = { currentAttachment = null; saveDraftFields() },
                                 modifier = Modifier
                                     .size(32.dp)
                                     .testTag("remove_attachment_button")
@@ -412,7 +420,7 @@ fun ChatDetailScreen(
 
                     OutlinedTextField(
                         value = messageInput,
-                        onValueChange = { messageInput = it },
+                        onValueChange = { messageInput = it; saveDraftFields() },
                         placeholder = {
                             Text(
                                 if (currentAttachment != null) "Note for evidence review..." else "Ask local desktop AI..."
@@ -456,8 +464,7 @@ fun ChatDetailScreen(
                                     }
                                     // Store the exact submission synchronously before dispatch, using
                                     // the same encrypted-RAM callback as ordinary draft changes.
-                                    onUnsentDraftChange(JSONObject().put("text", messageInput)
-                                        .put("evidence", attachmentForm(currentAttachment)).toString())
+                                    saveDraftFields()
                                     pendingSubmission = PendingChatSubmission(messageInput, currentAttachment,
                                         lastSavedSubmission?.id, submissionFinished)
                                     onSendMessage(prompt, currentAttachment)

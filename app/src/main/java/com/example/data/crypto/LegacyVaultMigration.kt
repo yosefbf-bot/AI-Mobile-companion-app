@@ -47,7 +47,7 @@ object LegacyVaultMigration {
             "Legacy demo — unverified synthetic; no desktop work performed"
             else "Legacy — review source before use"
         fun body(value: String): String {
-            if (value.startsWith(VaultCodec.PREFIX)) {
+            if (value.startsWith(VaultCodec.PREFIX) || value.startsWith(PolicyVaultCodec.PREFIX)) {
                 cipher.decrypt(value) // Verify rather than trusting a format marker.
                 return value
             }

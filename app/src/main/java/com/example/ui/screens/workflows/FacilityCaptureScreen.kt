@@ -30,7 +30,9 @@ fun FacilityCaptureScreen(
     onPickEvidence: ((String) -> Unit)? = null, onTakePhoto: (() -> Unit)? = null,
     incomingEvidence: ChatAttachment? = null, onConsumeEvidence: () -> Unit = {},
     loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
-    lastSavedCaptureId: String? = null
+    draftState: LocalDraftFormState? = null,
+    onDraftFieldsChange: ((String, ChatAttachment?) -> Unit)? = null,
+    lastSavedCaptureId: String? = null, draftController: com.example.ui.LocalDraftController? = null
 ) {
     val context = LocalContext.current
     val restored = remember { unsentForm(loadUnsentDraft()) }
@@ -41,21 +43,33 @@ fun FacilityCaptureScreen(
     var deadline by remember { mutableStateOf(restored.optString("deadline")) }
     var channel by remember { mutableStateOf(restored.optString("channel").takeIf(String::isNotBlank)) }
     var evidence by remember { mutableStateOf(formAttachment(restored)) }
-    val form = remember(note,kind,location,owner,deadline,channel,evidence) {
-        JSONObject().put("note",note).put("kind",kind).put("location",location).put("owner",owner)
-            .put("deadline",deadline).put("channel",channel ?: "").put("evidence",attachmentForm(evidence)).toString()
+    fun draftFields() = JSONObject().put("note",note).put("kind",kind).put("location",location).put("owner",owner)
+        .put("deadline",deadline).put("channel",channel ?: "").toString()
+    fun saveDraftFields() {
+        onDraftFieldsChange?.invoke(draftFields(), evidence)
+            ?: onUnsentDraftChange(JSONObject(draftFields()).put("evidence", attachmentForm(evidence)).toString())
     }
+    CaptureLatestDraft(draftState) { draftFields() to evidence }
+    // A compact submission identity: unchanged evidence is compared by its stable object.
+    val form = draftFields()
+    var submittedEvidence by remember { mutableStateOf<ChatAttachment?>(null) }
     var submittedForm by remember { mutableStateOf<Pair<String,String?>?>(null) }
     LaunchedEffect(lastSavedCaptureId) {
         submittedForm?.let { (savedForm, priorId) ->
             if (lastSavedCaptureId != null && lastSavedCaptureId != priorId) {
-                if (form == savedForm) { note = ""; location = ""; owner = ""; deadline = ""; channel = null; evidence = null }
+                val before = unsentForm(savedForm)
+                if (note == before.optString("note")) note = ""
+                if (location == before.optString("location")) location = ""
+                if (owner == before.optString("owner")) owner = ""
+                if (deadline == before.optString("deadline")) deadline = ""
+                if (channel.orEmpty() == before.optString("channel")) channel = null
+                if (evidence == submittedEvidence) evidence = null
                 submittedForm = null
             }
         }
     }
     val dictate = rememberOnDeviceDictation { note = if (note.isBlank()) it else "$note $it" }
-    LaunchedEffect(form) { onUnsentDraftChange(form) }
+    LaunchedEffect(form, evidence) { saveDraftFields() }
     LaunchedEffect(incomingEvidence) { incomingEvidence?.let { evidence = it; onConsumeEvidence() } }
     var manualDetails by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
@@ -85,7 +99,7 @@ fun FacilityCaptureScreen(
             Card {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Capture a note", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(note, { note = it }, label = { Text("What’s on your mind?") }, minLines = 3, modifier = Modifier.fillMaxWidth().testTag("capture_note"))
+                    OutlinedTextField(note, { note = it; saveDraftFields() }, label = { Text("What’s on your mind?") }, minLines = 3, modifier = Modifier.fillMaxWidth().testTag("capture_note"))
                     TextButton(onClick = dictate, enabled = !busy) { Text("Dictate on device") }
                     TextButton(onClick = { manualDetails = !manualDetails }, modifier = Modifier.testTag("capture_details")) { Text(if (manualDetails) "Hide details" else "Details (optional)") }
                     if (manualDetails) {
@@ -93,9 +107,9 @@ fun FacilityCaptureScreen(
                         FilterChip(selected = kind == value, onClick = { kind = value }, label = { Text(value.replaceFirstChar(Char::uppercase)) })
                         Spacer(Modifier.width(6.dp))
                     } }
-                    OutlinedTextField(location, { location = it }, label = { Text("Location, if known") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(owner, { owner = it }, label = { Text("Responsible person, if known") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(deadline, { deadline = it }, label = { Text("Due date/time: yyyy-MM-dd HH:mm (phone time zone)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(location, { location = it; saveDraftFields() }, label = { Text("Location, if known") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(owner, { owner = it; saveDraftFields() }, label = { Text("Responsible person, if known") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(deadline, { deadline = it; saveDraftFields() }, label = { Text("Due date/time: yyyy-MM-dd HH:mm (phone time zone)") }, modifier = Modifier.fillMaxWidth())
                     Text("Leave a date blank when it is unknown. No urgency or deadline is invented.")
                     Row {
                         FilterChip(channel == "outlook", { channel = if (channel == "outlook") null else "outlook" }, label = { Text("Outlook draft") })
@@ -118,6 +132,8 @@ fun FacilityCaptureScreen(
                             val due = parseDeadline(deadline)
                             require(note.isNotBlank() && note.length <= 12000)
                             localError = null
+                            saveDraftFields()
+                            submittedEvidence = evidence
                             submittedForm = form to lastSavedCaptureId
                             onCapture(note, kind, location, owner, due, channel, evidence)
                         } catch (_: Exception) { localError = "Enter a note and a valid due date/time, or leave the date blank." }
@@ -161,6 +177,30 @@ fun FacilityCaptureScreen(
         if (snapshot.truncated) item { Text("Only the first records are shown. Review the full list on the desktop.") }
     }
     selectedAction?.let { action ->
+        if (draftController != null) {
+            LocalDraftDialog(draftController, "action:" + action.id, "Review action", { selectedAction = null }) { draft ->
+                val form = remember { unsentForm(draft.form) }
+                var editOwner by remember { mutableStateOf(form.optString("owner", action.owner)) }
+                var editDue by remember { mutableStateOf(form.optString("due", if (action.dueAt == null) "" else formatDeadline(action.dueAt))) }
+                var note by remember { mutableStateOf(form.optString("note")) }
+                var complete by remember { mutableStateOf(form.optBoolean("complete")) }
+                fun fields() = JSONObject().put("owner",editOwner).put("due",editDue).put("note",note).put("complete",complete).toString()
+                CaptureLatestDraft(draft) { fields() to null }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(action.description)
+                    OutlinedTextField(editOwner, { editOwner = it; draft.update(fields()) }, label = { Text("Owner") })
+                    OutlinedTextField(editDue, { editDue = it; draft.update(fields()) }, label = { Text("Due: yyyy-MM-dd HH:mm") })
+                    OutlinedTextField(note, { note = it; draft.update(fields()) }, label = { Text("Review/completion note") })
+                    Row { Checkbox(complete, { complete = it; draft.update(fields()) }); Text("Mark completed with this note") }
+                    Button(onClick = {
+                        try {
+                            require(!complete || note.isNotBlank())
+                            draft.update(fields()); onUpdateAction(action, editOwner, parseDeadline(editDue), note, complete); selectedAction = null
+                        } catch (_: Exception) { Toast.makeText(context, "Check the date and completion note.", Toast.LENGTH_SHORT).show() }
+                    }, enabled = !busy) { Text("Save revision") }
+                }
+            }
+        } else {
         var editOwner by remember(action.id) { mutableStateOf(action.owner) }
         var editDue by remember(action.id) { mutableStateOf(if (action.dueAt == null) "" else formatDeadline(action.dueAt)) }
         var completionNote by remember(action.id) { mutableStateOf("") }
@@ -181,8 +221,26 @@ fun FacilityCaptureScreen(
                 } catch (_: Exception) { Toast.makeText(context, "Check the date and completion note.", Toast.LENGTH_SHORT).show() }
             }, enabled = !busy) { Text("Save revision") } },
             dismissButton = { TextButton(onClick = { selectedAction = null }) { Text("Cancel") } })
+        }
     }
     selectedDraft?.let { draft ->
+        if (draftController != null) {
+            LocalDraftDialog(draftController, "workflow-draft:" + draft.id, "Internal ${draft.channel} draft", { selectedDraft = null }) { local ->
+                val form = remember { unsentForm(local.form) }
+                var recipient by remember { mutableStateOf(form.optString("recipient", draft.recipient)) }
+                var subject by remember { mutableStateOf(form.optString("subject", draft.subject)) }
+                var body by remember { mutableStateOf(form.optString("body", draft.body)) }
+                fun fields() = JSONObject().put("recipient",recipient).put("subject",subject).put("body",body).toString()
+                CaptureLatestDraft(local) { fields() to null }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(recipient, { recipient = it; local.update(fields()) }, label = { Text("Recipient, if known") })
+                    OutlinedTextField(subject, { subject = it; local.update(fields()) }, label = { Text("Subject, if needed") })
+                    OutlinedTextField(body, { body = it; local.update(fields()) }, label = { Text("Draft text") }, minLines = 3)
+                    Text("This saves a review draft only. Delivery is a separate action on the desktop.")
+                    Button(onClick = { local.update(fields()); onSaveDraft(draft, recipient, body, subject); selectedDraft = null }, enabled = !busy && body.isNotBlank()) { Text("Save draft") }
+                }
+            }
+        } else {
         var recipient by remember(draft.id) { mutableStateOf(draft.recipient) }
         var body by remember(draft.id) { mutableStateOf(draft.body) }
         var subject by remember(draft.id) { mutableStateOf(draft.subject) }
@@ -195,6 +253,7 @@ fun FacilityCaptureScreen(
             } },
             confirmButton = { TextButton(onClick = { onSaveDraft(draft, recipient, body, subject); selectedDraft = null }, enabled = !busy && body.isNotBlank()) { Text("Save draft") } },
             dismissButton = { TextButton(onClick = { selectedDraft = null }) { Text("Cancel") } })
+        }
     }
 }
 
