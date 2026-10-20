@@ -26,6 +26,12 @@ class PrivateAIRepository(
     private val cipher: VaultCipher = EncryptionManager,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO
 ) {
+    private companion object {
+        // Desktop request receipts expire after 24 hours. Leave a one-hour
+        // margin and require review before replaying an uncertain old delivery.
+        const val AUTOMATIC_CHAT_REPLAY_WINDOW_MILLIS = 23L * 60 * 60 * 1000
+    }
+
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val selectedDatabase = MutableStateFlow(database)
     private val chatDao get() = selectedDatabase.value.chatDao()
@@ -552,8 +558,15 @@ class PrivateAIRepository(
                     "Privacy requirements changed after this request was attempted. Review its desktop history and submit a new request if appropriate.")
                 attempt = attempt.copy(requireLocal = true, requireHipaa = true)
             }
+            val now = System.currentTimeMillis()
+            val firstAttempt = message.attemptedAt
+            if (firstAttempt != null && (firstAttempt <= 0 || firstAttempt > now ||
+                    now - firstAttempt >= AUTOMATIC_CHAT_REPLAY_WINDOW_MILLIS)) {
+                throw GatewayException("REPLAY_WINDOW_EXPIRED", 409,
+                    "This message may already have been processed. Review its desktop conversation before sending a new request.")
+            }
             // Persist both the immutable request policy and its first attempt before any network work.
-            attempt = attempt.copy(attemptedAt = attempt.attemptedAt ?: System.currentTimeMillis())
+            attempt = attempt.copy(attemptedAt = firstAttempt ?: now)
             targetDao.updateMessage(VaultRecords.encode(attempt, cipher))
             val reply = nodeService.dispatchInferenceToDesktop(attempt.sessionId, cipher.decrypt(attempt.encryptedContent),
                 destination, attempt.requestId, requireLocal = attempt.requireLocal, requireHipaa = attempt.requireHipaa)

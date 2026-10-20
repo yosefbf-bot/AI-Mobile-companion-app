@@ -1,3 +1,34 @@
+# Reconnect safety candidate — October 19, 2026
+
+Version **1.2.5-dev / code 8**, based on main
+`13b7646c0b3135214815f490371cab84ec65d65f`, addresses a confirmed retry defect:
+the desktop retains chat duplicate protection for 24 hours, while the phone
+previously retried uncertain deliveries indefinitely. A response lost before
+acknowledgment could therefore cause another inference after a day-long outage.
+
+Previously attempted messages now require review before network delivery once
+their first attempt is 23 hours old (a one-hour margin), invalid or in the future.
+The original request ID, text, pairing, privacy and attempt time remain intact.
+The phone asks the owner to check desktop history before sending a new request;
+it does not manufacture a replacement ID. Never-attempted offline messages are
+still eligible for their first delivery, regardless of their creation date.
+The age bound uses the phone clock; arbitrary clock rollback can defeat age
+detection, so this is not an exactly-once guarantee across manual clock changes.
+No new settings, cloud service, dependency, protocol or database migration.
+
+Four new loopback-HTTPS repository regressions exercise a received request with
+a lost reply, expired and recent retries, never-attempted old work and a changed
+phone clock. Current-source compilation/execution remains pending. Expected
+inventory: 178 unit cases (176 passes plus the two existing named external-fixture
+skips) and all 12 actual device cases. Keep full exact-head PR/main gates.
+
+The accepted 1.2.4-dev source at the base above passed PR run `39348957897` and
+main run `39351630614`: 172 unit passes, two named external-fixture skips,
+zero lint errors and all 12 actual device cases without skips on each run.
+Its original-signer APK and raw reports are retained separately. Owner apps/data
+were not replaced; physical-owner phone/OEM/LAN/microphone/notification/upgrade
+acceptance is deferred. Earlier sections below describe historical checkpoints.
+
 # Actual manual-retry fixture synchronization — October 19, 2026
 
 Source `6f3f86f6e83ff8bd60c305863160376d50a6b2a7`, run `39346236095`,
