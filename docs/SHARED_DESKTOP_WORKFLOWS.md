@@ -1,3 +1,18 @@
+# Reconnecting after an uncertain chat delivery — October 19, 2026
+
+If a chat was already attempted but its answer was not acknowledged, automatic
+retry stops after 23 hours or if its attempt timestamp is invalid/future. The
+message remains saved with **Review required**. Check the conversation on the
+desktop before manually sending a new request; it may already have an answer.
+The phone keeps the original request ID and never silently creates a replacement.
+Messages composed offline that have never been attempted can still send normally.
+This bounds automatic retry using the phone clock. It is not an exactly-once
+guarantee across manual clock changes; review desktop history when uncertain.
+
+This behavior is in the 1.2.5-dev candidate and awaits its own full validation.
+The 1.2.4-dev secure-session/draft update passed both PR and main automated gates.
+Older validation notes below are historical; owner-device acceptance stays separate.
+
 # Secure phone sessions and encrypted local auto-drafts — October 19, 2026
 
 Current development branch `chatgpt/secure-unlock-autodrafts-2026-10-19` starts

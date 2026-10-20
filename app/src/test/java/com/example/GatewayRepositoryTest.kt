@@ -63,6 +63,7 @@ class GatewayRepositoryTest {
     @Volatile private var allowActionReads = true
     @Volatile private var grantChat = true
     @Volatile private var wrongChatAcknowledgment = false
+    @Volatile private var loseChatAcknowledgment = false
     @Volatile private var evidenceComplete = true
     @Volatile private var beforeEvidenceResponse: (() -> Unit)? = null
     @Volatile private var beforeStatusResponse: (() -> Unit)? = null
@@ -96,6 +97,11 @@ class GatewayRepositoryTest {
                 GatewayEndpoints.CHAT_SEND -> {
                     chatRequests.incrementAndGet()
                     synchronized(requests) { requests.add(input) }
+                    if (loseChatAcknowledgment) {
+                        // The desktop received the request, but the phone gets no receipt.
+                        exchange.close()
+                        return@createContext
+                    }
                     if (!allowChat) { code = 503; JSONObject().put("error",JSONObject().put("code","LOCAL_UNAVAILABLE")) }
                     else JSONObject().put("reply","SYNTHETIC real HTTP reply").put("sessionId",input.getString("sessionId"))
                         .put("requestId",if (wrongChatAcknowledgment) "wrong-request" else input.getString("requestId")).put("processing",JSONObject().put("provider","local").put("model","SYNTHETIC test engine"))
@@ -234,6 +240,93 @@ class GatewayRepositoryTest {
         assertTrue(actionReads.get() > 0)
         assertEquals(0L, repository.lastSyncTimestamp.value) // A partial refresh is not a successful sync.
         assertTrue(repository.lastConnectionCheck.value > 0)
+    }
+
+    @Test fun lostAcknowledgmentAfterReplayDeadlineRequiresReviewWithoutAnotherHttpRequest() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC uncertain delivery")
+        loseChatAcknowledgment = true
+        try { repository.sendMessage(session,"SYNTHETIC original question"); fail("A lost acknowledgment must remain uncertain.") }
+        catch (_: GatewayException) {}
+        val original = database.chatDao().getQueuedOfflineMessages().single()
+        assertNotNull(original.attemptedAt)
+        assertEquals(1, chatRequests.get())
+        val oldAttempt = System.currentTimeMillis() - 25L * 60 * 60 * 1000
+        database.chatDao().updateMessage(original.copy(attemptedAt = oldAttempt))
+        loseChatAcknowledgment = false
+        val sync = repository.triggerSync()
+        assertFalse(sync.success)
+        assertEquals("No second HTTP request may restart expired desktop work.", 1, chatRequests.get())
+        val reviewed = repository.getMessagesForSession(session).first().single()
+        assertEquals("REVIEW_REQUIRED", reviewed.status)
+        assertEquals(original.id, reviewed.id)
+        assertEquals(original.requestId, reviewed.requestId)
+        assertEquals(oldAttempt, reviewed.attemptedAt)
+        assertEquals(original.desktopFingerprint, reviewed.desktopFingerprint)
+        assertEquals(original.requireLocal, reviewed.requireLocal)
+        assertEquals(original.requireHipaa, reviewed.requireHipaa)
+        assertEquals("SYNTHETIC original question", cipher.decrypt(reviewed.encryptedContent))
+        assertTrue(reviewed.deliveryError!!.contains("desktop conversation"))
+        assertTrue(actionReads.get() > 0)
+        assertTrue(database.chatDao().getQueuedOfflineMessages().isEmpty())
+        repository.triggerSync()
+        assertEquals("Automatic checks must not resubmit the reviewed request.", 1, chatRequests.get())
+    }
+
+    @Test fun lostAcknowledgmentInsideReplayWindowKeepsRequestPolicyAndFirstAttempt() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC recent delivery")
+        loseChatAcknowledgment = true
+        try { repository.sendMessage(session,"SYNTHETIC recent question"); fail("A lost acknowledgment must remain pending.") }
+        catch (_: GatewayException) {}
+        val original = database.chatDao().getQueuedOfflineMessages().single()
+        val firstAttempt = System.currentTimeMillis() - 22L * 60 * 60 * 1000
+        database.chatDao().updateMessage(original.copy(attemptedAt = firstAttempt))
+        loseChatAcknowledgment = false
+        assertTrue(repository.triggerSync().success)
+        assertEquals(2, chatRequests.get())
+        assertEquals(requests[0].getString("requestId"), requests[1].getString("requestId"))
+        assertEquals(requests[0].getBoolean("requireLocal"), requests[1].getBoolean("requireLocal"))
+        assertEquals(requests[0].getBoolean("requireHipaa"), requests[1].getBoolean("requireHipaa"))
+        val stored = repository.getMessagesForSession(session).first().single { it.sender == "user" }
+        assertEquals(firstAttempt, stored.attemptedAt)
+        assertEquals("SYNCED_DESKTOP", stored.status)
+        assertEquals(1, repository.getMessagesForSession(session).first().count { it.sender == "assistant" })
+    }
+
+    @Test fun neverAttemptedWeekOldOfflineChatStillGetsItsFirstDelivery() = runBlocking {
+        allowStatus = false
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC long offline queue")
+        repository.sendMessage(session,"SYNTHETIC never attempted question")
+        val original = database.chatDao().getQueuedOfflineMessages().single()
+        assertNull(original.attemptedAt)
+        database.chatDao().updateMessage(original.copy(timestamp = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000))
+        allowStatus = true
+        assertTrue(repository.triggerSync().success)
+        assertEquals(1, chatRequests.get())
+        assertEquals(original.requestId, requests.single().getString("requestId"))
+        val stored = repository.getMessagesForSession(session).first().single { it.sender == "user" }
+        assertNotNull(stored.attemptedAt)
+        assertEquals("SYNCED_DESKTOP", stored.status)
+    }
+
+    @Test fun futureFirstAttemptRequiresReviewBeforeAnyReplay() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC changed clock")
+        loseChatAcknowledgment = true
+        try { repository.sendMessage(session,"SYNTHETIC clock question"); fail("A lost acknowledgment must remain pending.") }
+        catch (_: GatewayException) {}
+        val original = database.chatDao().getQueuedOfflineMessages().single()
+        val futureAttempt = System.currentTimeMillis() + 60L * 60 * 1000
+        database.chatDao().updateMessage(original.copy(attemptedAt = futureAttempt))
+        loseChatAcknowledgment = false
+        assertFalse(repository.triggerSync().success)
+        assertEquals(1, chatRequests.get())
+        val reviewed = repository.getMessagesForSession(session).first().single()
+        assertEquals("REVIEW_REQUIRED", reviewed.status)
+        assertEquals(original.requestId, reviewed.requestId)
+        assertEquals(futureAttempt, reviewed.attemptedAt)
     }
 
     @Test fun neverAttemptedOfflineRequestCanAdoptStricterPrivacyBeforeItsFirstSend() = runBlocking {
