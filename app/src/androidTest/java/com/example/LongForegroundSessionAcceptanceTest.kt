@@ -9,6 +9,8 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.compose.ui.test.*
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -49,7 +51,14 @@ class LongForegroundSessionAcceptanceTest {
     private val device by lazy { UiDevice.getInstance(instrumentation) }
     private val systemPackages = Pattern.compile("com\\.android\\.(systemui|settings)")
     private lateinit var model: MainViewModel
+    private var phaseStarted = SystemClock.elapsedRealtime()
     private var phase = "startup"
+        set(value) {
+            Log.i("PrivateAILongAcceptance", "PHASE END (boundary): $field; elapsedMillis=${SystemClock.elapsedRealtime() - phaseStarted}")
+            field = value
+            phaseStarted = SystemClock.elapsedRealtime()
+            Log.i("PrivateAILongAcceptance", "PHASE BEGIN: $value")
+        }
 
     @After fun closeAndDrain() {
         rule.activityRule.scenario.close()
@@ -84,9 +93,36 @@ class LongForegroundSessionAcceptanceTest {
         rule.onNodeWithTag("node_settings_screen").performScrollToIndex(6)
         frame()
     }
+    private fun showSettingsControl(matcher: SemanticsMatcher, label: String) {
+        val control = rule.onNode(matcher)
+        val settings = rule.onNodeWithTag("node_settings_screen")
+        // Reuse the finite real ScrollBy/progress pattern in the accepted camera
+        // harness. Compose 1.7.2's recursive performScrollTo loop exhausted the
+        // device heap at the final button inside this tall Privacy list item.
+        repeat(8) { step ->
+            try { control.assertIsDisplayed(); return }
+            catch (notVisible: AssertionError) { if (step == 7) throw notVisible }
+            val viewport = settings.fetchSemanticsNode()
+            assertTrue("The real settings viewport must have positive height.", viewport.boundsInRoot.height > 0f)
+            val before = viewport.config[SemanticsProperties.VerticalScrollAxisRange].value()
+            settings.performSemanticsAction(SemanticsActions.ScrollBy) { scroll ->
+                assertTrue("The actual settings scroll action must be accepted.",
+                    scroll(0f, viewport.boundsInRoot.height * 0.6f))
+            }
+            // ScrollBy launches on the configured dispatcher; deliver a frame
+            // before checking real layout and scrolling progress.
+            rule.mainClock.advanceTimeByFrame()
+            rule.waitForIdle()
+            val after = settings.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+            Log.i("PrivateAILongAcceptance", "SCROLL: $label; step=$step; before=$before; after=$after; phase=$phase")
+            assertTrue("No scrolling progress while bringing $label into view at bounded step $step.", before != after)
+        }
+        control.assertIsDisplayed()
+    }
     private fun choose(minutes: Int) {
         privacy()
-        rule.onNodeWithTag("session_mode_" + minutes).performScrollTo().assertIsEnabled().performClick()
+        showSettingsControl(hasTestTag("session_mode_" + minutes), "session_mode_" + minutes)
+        rule.onNodeWithTag("session_mode_" + minutes).assertIsDisplayed().assertIsEnabled().performClick()
         unlock()
         rule.waitUntil(30_000) { EncryptionManager.committedSessionMinutes.value == minutes && model.vaultReady.value }
         frame()
@@ -133,6 +169,7 @@ class LongForegroundSessionAcceptanceTest {
         var expectedDraftText = "Synthetic unsent note survives policy and reopening"
         var evidenceHash: String? = null
         try {
+            phase = "original five-minute OS authentication"
             unlock()
             assertEquals("Suite isolation starts at the original default policy.", 5, EncryptionManager.committedSessionMinutes.value)
             assertKey("private_ai_vault_v2", 300)
@@ -200,7 +237,8 @@ class LongForegroundSessionAcceptanceTest {
             assertDurableDraft()
             phase = "manual lock revokes the longer session"
             privacy()
-            rule.onNodeWithText("Lock phone workspace").performScrollTo().performClick()
+            showSettingsControl(hasText("Lock phone workspace"), "Lock phone workspace")
+            rule.onNodeWithText("Lock phone workspace").assertIsDisplayed().performClick()
             assertLocked(); unlock()
             phase = "background revokes the longer session"
             assertTrue(device.pressHome())

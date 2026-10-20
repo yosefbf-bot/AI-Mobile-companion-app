@@ -1,3 +1,22 @@
+# Actual device-test scrolling correction — October 19, 2026
+
+Exact source `e585f0e465ffd37201ed4084312d4b59afa6457a`, PR run
+`39340887493`, records 172 unit passes, the two existing named external-fixture
+skips, lint with zero errors, and one actual pre-PIN secure-screen-lock rejection
+pass. The normal eleven-case phase did not finish: the job reached its timeout.
+Preserved synthetic logcat identifies the first failure at the manual-lock UI
+step: `ActionsKt.scrollToNode` / `performScrollTo`, called by
+`LongForegroundSessionAcceptanceTest.kt:203`, exhausted the test process heap.
+This is not twelve-case acceptance. The correction replaces recursive test
+scrolling with bounded explicit scrolling to the same actual Settings controls;
+all real authentication, elapsed-time, evidence and migration assertions remain.
+The retained camera-permission case also updates its obsolete disabled-placeholder
+expectations: secure-phone sessions now expose enabled 10/20/30 choices, retain
+selected default5 and have no indefinite Off option. Its case identity, actual
+camera-denial/manual-pairing and background-revocation assertions are retained.
+The corrected exact-head PR and main still require full fresh validation.
+Owner installations and data remain untouched.
+
 # First hosted secure-session validation — October 19, 2026
 
 PR #11 is the review path for 1.2.4-dev/code7. First run `39336932981`
