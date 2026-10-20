@@ -66,12 +66,25 @@ class LongForegroundSessionAcceptanceTest {
     }
 
     private fun frame() { rule.mainClock.advanceTimeBy(300); rule.waitForIdle() }
-    private fun unlock() {
+    private fun unlock(manualRetry: Boolean = false) {
         val pin = InstrumentationRegistry.getArguments().getString("privateai.test.devicePin")
         assertFalse("A disposable OS-PIN fixture is required, not a skipped test.", pin.isNullOrBlank())
+        if (manualRetry) {
+            // Lock now intentionally requires the visible retry action. Core lock
+            // flags can change before the queued Compose lock screen is rendered.
+            frame()
+            rule.waitUntil(10_000) {
+                rule.mainClock.advanceTimeByFrame()
+                rule.waitForIdle()
+                val retry = rule.onAllNodesWithTag("unlock_biometric_button").fetchSemanticsNodes().singleOrNull()
+                retry != null && !retry.config.contains(SemanticsProperties.Disabled) &&
+                    rule.onNodeWithTag("unlock_biometric_button").isDisplayed()
+            }
+            rule.onNodeWithTag("unlock_biometric_button").assertIsDisplayed().assertIsEnabled().performClick()
+        }
         var entry = device.wait(Until.findObject(By.clazz("android.widget.EditText").pkg(systemPackages)), 3_000)
         if (entry == null) {
-            if (rule.onAllNodesWithTag("unlock_biometric_button").fetchSemanticsNodes().isNotEmpty())
+            if (!manualRetry && rule.onAllNodesWithTag("unlock_biometric_button").fetchSemanticsNodes().isNotEmpty())
                 rule.onNodeWithTag("unlock_biometric_button").performClick()
             entry = device.wait(Until.findObject(By.clazz("android.widget.EditText").pkg(systemPackages)), 5_000)
         }
@@ -239,7 +252,7 @@ class LongForegroundSessionAcceptanceTest {
             privacy()
             showSettingsControl(hasText("Lock phone workspace"), "Lock phone workspace")
             rule.onNodeWithText("Lock phone workspace").assertIsDisplayed().performClick()
-            assertLocked(); unlock()
+            assertLocked(); unlock(manualRetry = true)
             phase = "background revokes the longer session"
             assertTrue(device.pressHome())
             rule.waitUntil(10_000) { !rule.activityRule.scenario.state.isAtLeast(Lifecycle.State.STARTED) }

@@ -1,3 +1,18 @@
+# Actual manual-retry fixture synchronization — October 19, 2026
+
+Source `6f3f86f6e83ff8bd60c305863160376d50a6b2a7`, run `39346236095`,
+records 172 unit passes, the same two named external-fixture skips and zero lint
+errors. Eleven of twelve actual device cases passed without skips. The sole
+failure was the new long case's manual re-unlock helper: it did not find the
+genuine credential screen after checking the app's retry button only once.
+Bounded scrolling, actual elapsed time, protected five-MiB draft reads/writes
+and manual revocation were reached; normal-authenticated five-minute cleanup
+succeeded. Manual lock intentionally requires the existing Try again action.
+The focused fixture correction waits for its real displayed/enabled button,
+clicks once and retains the original genuine OS PIN assertion. This evidence
+does not establish a production authentication defect or full acceptance.
+The corrected exact-head PR and main still require all twelve actual cases.
+
 # Actual device-test scrolling correction — October 19, 2026
 
 Exact source `e585f0e465ffd37201ed4084312d4b59afa6457a`, PR run
