@@ -1,3 +1,22 @@
+# Finished local release interoperability candidate — October 20, 2026
+
+Base main `56413e55a42b2d110319ac982488ec744d5d39be`; candidate **1.2.6-dev/code9**.
+See [the current candidate and evidence boundaries](docs/FINISHED_RELEASE_INTEROP_2026-10-20.md).
+A new required Windows job runs the two unchanged Android client interoperability
+tests against an immutable, reviewed desktop Core/SQLite/pinned-HTTPS checkout.
+It requires exactly two passes and zero skips; existing Android unit/lint/build
+and all twelve actual OS-authentication emulator cases remain required. The
+desktop pin targets reviewed main `452800210a33e34b1d18a648d1288562d9061d56` /
+3.0.8-dev; full desktop main/Pages raw acceptance must be preserved before
+companion publication. Sanitized receipt/JUnit evidence and bounded redacted
+first-failure diagnostics are uploaded; raw logs/stores/credentials are excluded.
+Local lightweight parser/gate/redactor and Git-range checks passed **42/42**; actual new hosted execution
+and independent review are pending. No local build/Gradle/emulator or owner installation, data, signer, pairing
+or production runtime change occurred.
+Physical phone/camera/LAN/live-account acceptance remains deferred, not passed.
+
+---
+
 # Reconnect safety candidate — October 19, 2026
 
 Version **1.2.5-dev / code 8**, based on main

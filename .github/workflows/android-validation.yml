@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Verify conservative scope and gate boundaries
-        run: python3 -m unittest discover -s .github/scripts -p 'test_ci_scope.py' -v
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
       - name: Classify complete change range
         id: classify
         run: python3 .github/scripts/ci_scope.py
@@ -171,9 +171,100 @@ jobs:
           retention-days: ${{ github.event_name == 'workflow_dispatch' && 14 || github.event_name == 'pull_request' && 3 || 7 }}
           if-no-files-found: warn
 
+  windows-desktop-interop:
+    needs: scope
+    if: ${{ needs.scope.outputs.mode != 'docs' }}
+    runs-on: windows-2025
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: companion
+          persist-credentials: false
+      - name: Read reviewed immutable desktop compatibility pin
+        id: desktop
+        shell: pwsh
+        run: |
+          $pin = Get-Content -LiteralPath companion/.github/desktop-interop.json -Raw | ConvertFrom-Json
+          if ($pin.repository -cne 'yosefbf-bot/Private-AI' -or $pin.commit -cnotmatch '^[a-f0-9]{40}$') {
+            throw 'Invalid desktop compatibility pin.'
+          }
+          "repository=$($pin.repository)" >> $env:GITHUB_OUTPUT
+          "commit=$($pin.commit)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ steps.desktop.outputs.repository }}
+          ref: ${{ steps.desktop.outputs.commit }}
+          path: desktop
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Cache dependency downloads with Gradle's free basic provider
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
+        with:
+          cache-provider: basic
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+          gradle-home-cache-includes: |
+            caches/modules-2
+            wrapper/dists
+          gradle-home-cache-excludes: |
+            caches/build-cache-*
+          build-scan-publish: false
+          dependency-graph: disabled
+      - name: Set up Android command-line tools
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          cmdline-tools-version: "12266719"
+          packages: "platform-tools"
+          log-accepted-android-sdk-licenses: "false"
+      - name: Verify wrapper and prepare Windows SDK
+        shell: pwsh
+        working-directory: companion
+        run: |
+          $wrapper = (Get-FileHash -LiteralPath gradle/wrapper/gradle-wrapper.jar -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($wrapper -cne 'b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13') { throw 'Wrapper checksum mismatch.' }
+          1..100 | ForEach-Object { 'y' } | & sdkmanager.bat --licenses > $null
+          if ($LASTEXITCODE -ne 0) { throw 'Android SDK license setup failed.' }
+          & sdkmanager.bat 'platforms;android-36.1' 'platforms;android-36' 'build-tools;36.0.0'
+          if ($LASTEXITCODE -ne 0) { throw 'Android SDK setup failed.' }
+      - name: Install locked desktop dependencies without lifecycle scripts
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependency setup failed.' }
+      - name: Compile Android unit classes before issuing the expiring invitation
+        shell: pwsh
+        working-directory: companion
+        run: |
+          .\gradlew.bat --no-daemon --no-build-cache --no-configuration-cache compileDebugUnitTestSources
+          if ($LASTEXITCODE -ne 0) { throw 'Android test compilation failed.' }
+      - name: Require both actual desktop HTTPS client tests with zero skips
+        shell: pwsh
+        run: |
+          python companion/.github/scripts/desktop_interop.py --companion-root companion --desktop-root desktop --evidence-root "$env:RUNNER_TEMP/privateai-interop-evidence"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual desktop interoperability gate failed; raw fixture logs are not published.' }
+      - name: Upload only sanitized interoperability evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: windows-desktop-interop-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/privateai-interop-evidence/receipt.json
+            ${{ runner.temp }}/privateai-interop-evidence/junit.xml
+            ${{ runner.temp }}/privateai-interop-evidence/failure.json
+            ${{ runner.temp }}/privateai-interop-evidence/failure.txt
+          retention-days: ${{ github.event_name == 'workflow_dispatch' && 14 || github.event_name == 'pull_request' && 3 || 7 }}
+          if-no-files-found: error
+
   ci-gate:
     if: ${{ always() }}
-    needs: [scope, build-test-device]
+    needs: [scope, build-test-device, windows-desktop-interop]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
