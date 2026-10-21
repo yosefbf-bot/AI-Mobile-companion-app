@@ -1,3 +1,19 @@
+# Copyright/license candidate — October 21, 2026
+
+Base main `71e1c9f7334a4eec8424a1062be75e2344e785be`. Candidate **1.2.7-dev/code10**
+adds owner-authorized YFriedman copyright and matching authorized-use terms.
+See docs/COPYRIGHT_LICENSE_2026-10-21.md. Settings opens the packaged license
+locally; third-party terms and existing identity/signer/data/security stay intact.
+Debug APK1.2.7/code10 built with the exact matching license asset. Full local
+unit inventory178:176pass,0fail/error,2explicit external-desktop fixture skips.
+A test-only API34 atomic-rename adapter fixed six host Windows failures without
+changing production crypto or removing assertions; causal focused10/10 pass.
+See docs/ANDROID_ATOMICFILE_HOST_TESTS_2026-10-21.md. Local lint passed
+0errors/45warnings; app and test APK builds passed. The packaged license bytes
+match and the test shadow is excluded from the app. All42 local policy/parser
+checks passed. Full current-head device/Windows interop acceptance remains
+pending. No owner installation or physical-phone test occurred.
+
 # Finished local release interoperability candidate — October 20, 2026
 
 Base main `56413e55a42b2d110319ac982488ec744d5d39be`; candidate **1.2.6-dev/code9**.

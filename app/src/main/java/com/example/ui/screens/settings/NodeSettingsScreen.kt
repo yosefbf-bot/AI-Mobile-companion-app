@@ -1,6 +1,8 @@
 package com.example.ui.screens.settings
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -13,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,6 +40,19 @@ fun NodeSettingsScreen(
     sessionPolicyError: String? = null,
     autoSaveDrafts: Boolean = true, onAutoSaveDraftsChange: (Boolean) -> Unit = {}
 ) {
+    val context = LocalContext.current
+    var showLicense by remember { mutableStateOf(false) }
+    if (showLicense) {
+        val license = remember(context) {
+            runCatching { context.assets.open("PRIVATE_AI_LICENSE.txt").bufferedReader().use { it.readText() } }
+                .getOrDefault("License could not be opened. See LICENSE.txt in the source distribution. Copyright (c) 2026 YFriedman.")
+        }
+        AlertDialog(onDismissRequest = { showLicense = false },
+            title = { Text("Copyright & license") },
+            text = { Text(license, modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                style = MaterialTheme.typography.bodySmall) },
+            confirmButton = { TextButton(onClick = { showLicense = false }) { Text("Close") } })
+    }
     var pairingText by remember { mutableStateOf("") }
     DisposableEffect(Unit) { onDispose { pairingText = "" } }
     LazyColumn(modifier.fillMaxSize().testTag("node_settings_screen"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -186,6 +202,12 @@ fun NodeSettingsScreen(
                 }
             }
             Button(onClick = onLockVault) { Text("Lock phone workspace") }
+        }
+        item {
+            Text("© 2026 YFriedman", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { showLicense = true }, modifier = Modifier.testTag("copyright_license")) {
+                Text("Copyright & license")
+            }
         }
     }
 }

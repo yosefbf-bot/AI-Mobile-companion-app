@@ -20,7 +20,7 @@ import java.io.File
 import java.nio.file.Files
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], shadows = [com.example.testutil.AndroidAtomicFileShadow::class])
 class StorageBoundaryTest {
     @Test fun expandedConfigurationIsRejectedBeforeCommittedFilesCanBeOverwritten() {
         val directory = Files.createTempDirectory("SYNTHETIC-policy-boundary").toFile()
