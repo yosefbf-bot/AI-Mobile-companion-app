@@ -7,7 +7,8 @@
     "docs/CI_COST_CONTROLS.md"
   ],
   "full_jobs": [
-    "build-test-device"
+    "build-test-device",
+    "windows-desktop-interop"
   ],
   "always_jobs": []
 }

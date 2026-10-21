@@ -60,6 +60,26 @@ class ScopeTests(unittest.TestCase):
         needs['runtime']['result'] = 'cancelled'
         self.assertFalse(evaluate_gate('docs', needs, POLICY))
 
+    def test_current_android_policy_requires_windows_interop_on_full_path(self):
+        policy = load_policy(Path(__file__).resolve().parents[2])
+        self.assertEqual(set(policy['full_jobs']), {'build-test-device', 'windows-desktop-interop'})
+        needs = {'scope': {'result': 'success'}, 'build-test-device': {'result': 'success'},
+                 'windows-desktop-interop': {'result': 'success'}}
+        self.assertTrue(evaluate_gate('full', needs, policy))
+        for status in ('skipped', 'failure', 'cancelled', None):
+            with self.subTest(status=status):
+                needs['windows-desktop-interop']['result'] = status
+                self.assertFalse(evaluate_gate('full', needs, policy))
+        self.assertFalse(evaluate_gate('full', {k: v for k, v in needs.items()
+                                              if k != 'windows-desktop-interop'}, policy))
+        needs['build-test-device']['result'] = 'skipped'
+        needs['windows-desktop-interop']['result'] = 'skipped'
+        self.assertTrue(evaluate_gate('docs', needs, policy))
+        workflow = (Path(__file__).resolve().parents[1] / 'workflows/android-validation.yml').read_text(encoding='utf-8')
+        self.assertIn('needs: [scope, build-test-device, windows-desktop-interop]', workflow)
+        self.assertIn('runs-on: windows-2025', workflow)
+        self.assertIn("-p 'test_*.py'", workflow)
+
     def test_allowlist_rejects_wildcards_traversal_and_duplicates(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
