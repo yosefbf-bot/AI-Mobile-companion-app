@@ -16,7 +16,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], shadows = [com.example.testutil.AndroidAtomicFileShadow::class])
 class VaultPolicyStorageTest {
     private lateinit var directory: File
     private lateinit var context: Context
