@@ -1,4 +1,7 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import java.time.Duration
 
 plugins {
   alias(libs.plugins.android.application)
@@ -57,6 +60,19 @@ android {
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }
+
+// Print the last started test even if it never returns; keep a stuck test task
+// from consuming the entire build/device job. Failures still fail validation.
+tasks.withType<Test>().configureEach {
+  timeout.set(Duration.ofMinutes(15))
+  testLogging {
+    events("started", "passed", "skipped", "failed")
+    exceptionFormat = TestExceptionFormat.FULL
+    showExceptions = true
+    showCauses = true
+    showStackTraces = true
+  }
+}
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.

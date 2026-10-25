@@ -52,6 +52,10 @@ import kotlin.coroutines.CoroutineContext
 @Config(sdk = [28])
 @OptIn(ExperimentalCoroutinesApi::class)
 class GatewayRepositoryTest {
+    // Real loopback HTTP plus controlled coroutine schedulers: a missed dispatch
+    // must fail this named test rather than wait for the outer CI job timeout.
+    @get:Rule val timeout = org.junit.rules.Timeout.seconds(120)
+
     private lateinit var server: HttpsServer
     private lateinit var config: DesktopNodeConfig
     private lateinit var database: AppDatabase
@@ -499,7 +503,17 @@ class GatewayRepositoryTest {
         val manualStart = statusReads.get()
         scheduler.advanceTimeBy(600_000); scheduler.runCurrent()
         assertEquals(manualStart, statusReads.get())
-        assertTrue(repository.triggerSync().success)
+        // triggerSync now dispatches storage/network work onto the repository's
+        // dispatcher. Calling it directly here would suspend runBlocking forever:
+        // this StandardTestDispatcher advances only when the test pumps it.
+        val manualSync = async(start = CoroutineStart.UNDISPATCHED) { repository.triggerSync() }
+        try {
+            completeScheduledJob(scheduler, manualSync)
+            assertTrue(manualSync.await().success)
+        } finally {
+            manualSync.cancel()
+            scheduler.runCurrent()
+        }
         assertEquals(manualStart + 1, statusReads.get())
     }
 
