@@ -17,7 +17,10 @@ interface PendingOperationDao {
     @Query("SELECT * FROM pending_operations WHERE status = 'PENDING' AND operation LIKE 'MEETING_%' AND desktopFingerprint = :fingerprint ORDER BY createdAt, rowid LIMIT 1")
     suspend fun nextMeeting(fingerprint: String): PendingOperation?
 
-    @Query("SELECT COALESCE(SUM(length(encryptedPayload)),0) FROM pending_operations WHERE status = 'PENDING' AND operation LIKE 'MEETING_%'")
+    @Query("UPDATE pending_operations SET status = 'REVIEW_REQUIRED' WHERE id = :id AND status = 'PENDING'")
+    suspend fun reviewMeetingOperation(id: String)
+
+    @Query("SELECT COALESCE(SUM(length(encryptedPayload)),0) FROM pending_operations WHERE status IN ('PENDING','REVIEW_REQUIRED') AND operation LIKE 'MEETING_%'")
     suspend fun meetingBytes(): Long
 
     @Query("SELECT COUNT(*) FROM pending_operations WHERE status = 'PENDING' AND operation LIKE 'MEETING_%' AND desktopFingerprint = :fingerprint")
@@ -25,6 +28,9 @@ interface PendingOperationDao {
 
     @Query("SELECT * FROM pending_operations WHERE operation = 'MEETING_STATE' AND desktopFingerprint = :fingerprint ORDER BY createdAt DESC LIMIT 100")
     suspend fun meetingStates(fingerprint: String): List<PendingOperation>
+
+    @Query("SELECT * FROM pending_operations WHERE operation = 'MEETING_FINISH' AND status = 'ACKNOWLEDGED' AND desktopFingerprint = :fingerprint")
+    suspend fun acknowledgedMeetingFinishes(fingerprint: String): List<PendingOperation>
 
     @Query("SELECT * FROM pending_operations WHERE id = :id AND operation = 'MEETING_STATE'")
     suspend fun meetingState(id: String): PendingOperation?

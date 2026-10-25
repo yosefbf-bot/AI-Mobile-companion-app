@@ -24,6 +24,11 @@ interface TaskDao {
     @Query("SELECT * FROM desktop_notifications")
     suspend fun allNotificationsForMigration(): List<DesktopNotification>
 
+    @Query("SELECT * FROM desktop_tasks WHERE storageVersion = 0")
+    suspend fun legacyTasks(): List<DesktopTask>
+    @Query("SELECT * FROM desktop_notifications WHERE storageVersion = 0")
+    suspend fun legacyNotifications(): List<DesktopNotification>
+
     @Query("SELECT * FROM desktop_notifications WHERE id = :id")
     suspend fun notificationById(id: String): DesktopNotification?
 

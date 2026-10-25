@@ -150,6 +150,19 @@ class FeatureErrorTesting {
         assertEquals(setOf("p", "r", "new"), database.chatDao().allMessagesForMigration().map { it.id }.toSet())
     }
 
+    @Test fun historyRevisionAndReplacementRollBackTogetherOnDatabaseFailure() = runBlocking {
+        val session = VaultRecords.encode(EncryptedChatSession("synthetic-chat", "Synthetic", desktopChatId = "synthetic-chat", desktopRevision = 1), cipher)
+        val old = VaultRecords.encode(EncryptedChatMessage("old-history", session.id, "assistant", cipher.encrypt("SYNTHETIC old"), status = "SYNCED_DESKTOP"), cipher)
+        database.chatDao().importHistory(session, listOf(old))
+        database.openHelper.writableDatabase.execSQL("CREATE TRIGGER synthetic_import_failure BEFORE INSERT ON chat_messages WHEN NEW.id = 'new-history' BEGIN SELECT RAISE(ABORT, 'synthetic import failure'); END")
+        try {
+            database.chatDao().importHistory(session.copy(desktopRevision = 2), listOf(old.copy(id = "new-history")))
+            fail("A failed import must not commit its revision or history deletion.")
+        } catch (_: Exception) { }
+        assertEquals(1L, database.chatDao().sessionById(session.id)!!.desktopRevision)
+        assertEquals(listOf("old-history"), database.chatDao().allMessagesForMigration().map { it.id })
+    }
+
     @Test fun notificationSyncDoesNotUndoLocalOrServerAcknowledgments() = runBlocking {
         val alert = DesktopNotification("alert", "Synthetic title", "Synthetic text", timestamp = 1)
         database.taskDao().insertNotification(VaultRecords.encode(alert.copy(isRead = true, isAcknowledged = true), cipher))

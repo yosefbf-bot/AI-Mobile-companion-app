@@ -20,6 +20,10 @@ interface DocumentDao {
     @Query("SELECT length(encryptedContent) FROM documents WHERE id = :id") suspend fun bodyLength(id: String): Long?
     @Query("SELECT substr(encryptedContent,:start,:count) FROM documents WHERE id = :id")
     suspend fun bodySlice(id: String, start: Int, count: Int): String?
+    @Query("SELECT id FROM documents WHERE storageVersion = 0 ORDER BY id")
+    suspend fun legacyIds(): List<String>
+    @Query("SELECT id FROM documents WHERE fileType = 'CAPTURE_PENDING' ORDER BY updatedAt, id")
+    suspend fun pendingCaptureIds(): List<String>
 
     /** Consistent transaction; each cursor row stays below Android's CursorWindow limit. */
     @Transaction suspend fun hydratedById(id: String): EncryptedDocument? {
@@ -39,7 +43,8 @@ interface DocumentDao {
     @Transaction suspend fun afterForPolicy(after: String?, limit: Int): List<EncryptedDocument> =
         metadataAfter(after, limit).mapNotNull { hydratedById(it.id) }
     @Transaction suspend fun allForMigration(): List<EncryptedDocument> = allMetadata().mapNotNull { hydratedById(it.id) }
-    fun getAllDocuments(): Flow<List<EncryptedDocument>> = watchMetadata().map { rows -> rows.mapNotNull { hydratedById(it.id) } }
+    /** Lists must never fetch evidence bodies. Open one document explicitly instead. */
+    fun getAllDocuments(): Flow<List<EncryptedDocument>> = watchMetadata()
     fun getDocumentById(id: String): Flow<EncryptedDocument?> = watchMetadataById(id).map { row -> row?.let { hydratedById(id) } }
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertDocument(doc: EncryptedDocument)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertDocuments(docs: List<EncryptedDocument>)

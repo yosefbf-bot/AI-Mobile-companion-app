@@ -66,4 +66,41 @@ class MeetingOutboxTest {
         assertEquals(16000,header.getInt(24));assertEquals(16,header.getShort(34).toInt());assertEquals(320,header.getInt(40))
         assertThrows(IllegalArgumentException::class.java) { PcmWave.encode(ShortArray(320001),320001) }
     }
+
+    @Test fun finishQueuedAndFinishAcknowledgedAreSeparateDurableStates() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java).build()
+        val cipher = TestVaultCipher()
+        try {
+            val outbox = MeetingOutbox(db, cipher)
+            val id = outbox.create("synthetic", "Synthetic finish")
+            outbox.finish("synthetic", id)
+            assertTrue(outbox.list("synthetic").single().finishQueued)
+            assertFalse(outbox.list("synthetic").single().finishAcknowledged)
+            val create = db.pendingOperationDao().nextMeeting("synthetic")!!
+            outbox.acknowledge(create, id, "server-meeting")
+            assertFalse(outbox.list("synthetic").single().finishAcknowledged)
+            val finish = db.pendingOperationDao().nextMeeting("synthetic")!!
+            assertEquals("MEETING_FINISH", finish.operation)
+            outbox.acknowledge(finish, id, "server-meeting")
+            assertTrue(MeetingOutbox(db, cipher).list("synthetic").single().finishAcknowledged)
+        } finally { db.close() }
+    }
+
+    @Test fun olderMeetingStateUsesItsExistingEncryptedFinishReceipt() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java).build()
+        val cipher = TestVaultCipher()
+        try {
+            val outbox = MeetingOutbox(db, cipher)
+            val id = outbox.create("synthetic", "Synthetic older receipt")
+            outbox.finish("synthetic", id)
+            val dao = db.pendingOperationDao()
+            val state = JSONObject(cipher.decrypt(dao.meetingState(id)!!.encryptedPayload)).apply { remove("finishAcknowledged") }
+            dao.updateMeetingState(id, cipher.encrypt(state.toString()))
+            val operations = dao.pending("synthetic")
+            val finish = operations.single { it.operation == "MEETING_FINISH" }
+            dao.acknowledgeMeeting(finish.id, "synthetic-server", cipher.encrypt(JSONObject().put("sourceId", id).put("serverId", "synthetic-server").toString()))
+            assertTrue(MeetingOutbox(db, cipher).list("synthetic").single().finishAcknowledged)
+            assertTrue(MeetingOutbox(db, cipher).list("different-pairing").isEmpty())
+        } finally { db.close() }
+    }
 }

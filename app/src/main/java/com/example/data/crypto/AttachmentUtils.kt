@@ -16,9 +16,6 @@ object AttachmentUtils {
     const val MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
     private const val MAX_IMAGE_SIDE = 2048
     private const val MAX_IMAGE_PIXELS = 64_000_000L
-    private val supportedDocuments = setOf("application/pdf", "application/json", "text/csv",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     fun readBounded(stream: InputStream, limit: Int = MAX_ATTACHMENT_BYTES): ByteArray {
         require(limit in 1..MAX_ATTACHMENT_BYTES)
@@ -95,13 +92,13 @@ object AttachmentUtils {
             }
         }
         val mime = resolver.getType(uri)?.lowercase() ?: return null
+        if (mime !in EvidenceValidator.mimeTypes) return null
         val type = when {
-            mime.startsWith("image/") -> "IMAGE"
-            mime.startsWith("text/") || mime in supportedDocuments -> "DOCUMENT"
-            else -> return null
+            mime == "image/jpeg" || mime == "image/png" -> "IMAGE"
+            else -> "DOCUMENT"
         }
         val bytes = resolver.openInputStream(uri)?.use { readBounded(it) } ?: return null
-        require(bytes.isNotEmpty()) { "Attachment is empty." }
+        EvidenceValidator.validateBytes(bytes, name, type, mime)
         val preview = if (type == "IMAGE") decodePreview(bytes) ?: return null else null
         ChatAttachment(name = safeName(name), type = type, base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP),
             sizeBytes = bytes.size.toLong(), previewBitmap = preview)

@@ -2,6 +2,7 @@ package com.example.data.network
 
 import android.util.Base64
 import com.example.data.model.*
+import com.example.data.crypto.EvidenceValidator
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -16,16 +17,9 @@ class SharedWorkflowService(private val transport: DesktopNodeService) {
 
     suspend fun uploadEvidence(config: DesktopNodeConfig, sourceId: String, attachment: ChatAttachment): String {
         val lease = transport.authorizationLease(config)
-        require(attachment.base64Data.length <= 7 * 1024 * 1024) { "Evidence is limited to 5 MiB." }
-        val bytes = Base64.decode(attachment.base64Data, Base64.NO_WRAP)
-        require(bytes.size in 1..5 * 1024 * 1024) { "Evidence is limited to 5 MiB." }
-        val mime = when {
-            bytes.size >= 8 && bytes.take(8).toByteArray().contentEquals(byteArrayOf(-119,80,78,71,13,10,26,10)) -> "image/png"
-            bytes.size >= 2 && bytes[0] == (-1).toByte() && bytes[1] == (-40).toByte() -> "image/jpeg"
-            bytes.size >= 5 && String(bytes, 0, 5, Charsets.US_ASCII) == "%PDF-" -> "application/pdf"
-            attachment.type == "DOCUMENT" && attachment.name.endsWith(".txt", true) -> "text/plain"
-            else -> throw GatewayException("UNSUPPORTED", message = "Evidence supports JPEG, PNG, PDF or plain text. Images are stored for review, not automatically interpreted.")
-        }
+        val validated = EvidenceValidator.validate(attachment)
+        val bytes = validated.bytes
+        val mime = validated.mime
         val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
         val uploadId = UUID.nameUUIDFromBytes("$sourceId|$hash".toByteArray()).toString()
         val chunkSize = 80 * 1024

@@ -280,7 +280,7 @@ class OsCredentialKeystoreAcceptanceTest {
             rule.waitUntil(10_000) { emptyEditableText.matches(input.fetchSemanticsNode()) }
             input.assert(emptyEditableText)
             rule.onNodeWithTag("chat_send_button").assertIsNotEnabled()
-            val document = runBlocking { model.repository.documents.first().single { it.id == captureId } }
+            val document = runBlocking { model.repository.getDocumentById(checkNotNull(captureId)).first()!! }
             assertEquals("CAPTURE_PENDING", document.fileType)
             val payload = org.json.JSONObject(EncryptionManager.decrypt(document.encryptedContent))
             assertEquals("Synthetic evidence note", payload.getString("text"))

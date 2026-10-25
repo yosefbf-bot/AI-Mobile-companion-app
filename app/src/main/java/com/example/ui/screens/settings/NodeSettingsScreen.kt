@@ -30,7 +30,6 @@ fun NodeSettingsScreen(
     currentConfig: DesktopNodeConfig, connectionStatus: ConnectionStatus, secureClinicalMode: Boolean,
     onSaveConfig: (DesktopNodeConfig) -> Unit, onToggleSecureClinicalMode: (Boolean) -> Unit,
     onTestConnection: () -> Unit, onLockVault: () -> Unit, modifier: Modifier = Modifier,
-    onRequestNotificationPermission: () -> Unit = {},
     appearance: Appearance = Appearance.DARK, onAppearanceChange: (Appearance) -> Unit = {},
     pairingState: PairingUiState = PairingUiState(), onPairLink: (String) -> Unit = {},
     onScanPairingQr: () -> Unit = {}, onCancelPairing: () -> Unit = {},
@@ -117,8 +116,8 @@ fun NodeSettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Switch(currentConfig.backgroundNotificationsEnabled, onCheckedChange = {
                             onSaveConfig(currentConfig.copy(backgroundNotificationsEnabled = it))
-                            if (it) onRequestNotificationPermission()
-                        }, enabled = currentConfig.notificationKey.isNotBlank() && !currentConfig.simulatedNodeEnabled)
+                        }, enabled = currentConfig.notificationKey.isNotBlank() && !currentConfig.simulatedNodeEnabled,
+                            modifier = Modifier.testTag("background_notifications_toggle"))
                         Text("Background follow-up notices")
                     }
                     Text("Optional generic notices use a separate notification-only key. No chat, notes, resident details or remote actions are accessible with that key. Allow notifications when Android asks.")

@@ -96,8 +96,12 @@ private fun MeetingsContent(viewModel: MainViewModel, draft: com.example.ui.comp
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(item.title, style = MaterialTheme.typography.titleMedium)
                     val desktop = remote.firstOrNull { it.sourceId == item.sourceId }
-                    Text(if (recorder != null && activeId == item.sourceId) "Recording" else if (item.finishQueued) "Submitted for desktop processing" else "Saved on phone; ready to resume")
-                    if (!item.finishQueued && recorder == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (recorder != null && activeId == item.sourceId) "Recording"
+                        else if (item.reviewError != null) "Delivery requires review: ${item.reviewError}. Saved audio is retained on this phone."
+                        else if (item.finishAcknowledged) "Submitted for desktop processing"
+                        else if (item.finishQueued) "Finish queued on phone; awaiting desktop acknowledgment"
+                        else "Saved on phone; ready to resume")
+                    if (!item.finishQueued && item.reviewError == null && recorder == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { start(item.sourceId) }, enabled = !busy && item.chunks < 180) { Text("Resume") }
                         Button(onClick = {
                             busy = true

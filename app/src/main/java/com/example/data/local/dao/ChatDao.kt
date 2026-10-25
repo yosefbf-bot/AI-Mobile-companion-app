@@ -25,6 +25,22 @@ interface ChatDao {
         insertMessages(rows)
     }
 
+    /** A revision becomes reusable only when its complete import has committed. */
+    @Transaction
+    suspend fun importHistory(session: EncryptedChatSession, rows: List<EncryptedChatMessage>) {
+        replaceSyncedHistory(session.id, rows)
+        insertSession(session)
+    }
+
+    @Query("SELECT * FROM chat_sessions WHERE id = :id LIMIT 1")
+    suspend fun sessionById(id: String): EncryptedChatSession?
+    @Query("SELECT id FROM chat_messages WHERE storageVersion = 0 ORDER BY timestamp, id")
+    suspend fun legacyMessageIds(): List<String>
+    @Query("SELECT * FROM chat_sessions WHERE storageVersion = 0")
+    suspend fun legacySessions(): List<EncryptedChatSession>
+    @Query("SELECT COUNT(*) FROM chat_messages WHERE status = 'QUEUED_OFFLINE'")
+    suspend fun queuedCount(): Int
+
     @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId AND status = 'SYNCED_DESKTOP'")
     suspend fun deleteAcknowledgedHistory(sessionId: String)
 
