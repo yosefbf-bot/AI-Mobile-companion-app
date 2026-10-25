@@ -1,5 +1,37 @@
 # Private AI Android companion instructions
 
+## ECC development workflow defaults — 2026-10-25
+
+When native `ecc@ecc` is available, select its guidance from ordinary task intent:
+`planner` for substantial/cross-component changes; `tdd-workflow` for meaningful
+behavior/regression changes; `verification-loop` before significant completion;
+`code-reviewer` for substantial/security-sensitive work; `security-review` for
+authentication, pairing, credentials, files, PHI and external connections;
+`e2e-testing` for changed UI flows; `build-error-resolver` for build/type failures.
+Planner/reviewer/resolver are installed `agents/` guidance, not Claude configs.
+Load only relevant guidance. ECC is optional development tooling, never an app
+dependency or release prerequisite. Existing security/CI requirements take precedence.
+
+Main agent implements/tests; at most one additional helper investigates or reviews
+read-only. No helper edits, nested delegation, duplicate work or repeated reviews
+without an unresolved issue. Preserve ChatGPT sign-in and chosen model/effort;
+no API billing, optional memory/learning jobs, background loops or new integrations.
+Use meaningful focused regression tests, not blanket coverage or timed full suites.
+
+Use the checked-in Gradle wrapper and JDK 17: `.\gradlew.bat --no-daemon
+assembleDebug testDebugUnitTest lintDebug assembleDebugAndroidTest` for the relevant
+full check; filter focused unit tests with `testDebugUnitTest --tests <test-class>`.
+Keep the actual CI instrumentation commands and isolated Windows HTTPS interop
+fixture requirements; never fabricate credentials or convert a fixture skip to pass.
+Changes to pairing/reconnect need pinned TLS, same-pairing replay identity,
+offline/partial-sync handling and desktop compatibility checks. Changed UI needs
+keyboard/composer, dark-mode and applicable navigation/lock tests. Preserve OS
+authentication, Keystore, original signer, encrypted drafts, additive migrations,
+generic restricted notifications and the PC-mediated AI architecture. Never bypass
+MFA/lock/TLS or send/delete messages to demonstrate a workflow. Report physical-phone
+LAN/VPN, microphone/camera, background delivery and upgrade checks as untested when
+the environment is unavailable; emulator/build results are separate evidence.
+
 GitHub is authoritative: `https://github.com/yosefbf-bot/AI-Mobile-companion-app`.
 Before every implementation task, fetch and verify `origin/main`, the active
 branch, worktree changes and version in `app/build.gradle.kts`. Preserve local
