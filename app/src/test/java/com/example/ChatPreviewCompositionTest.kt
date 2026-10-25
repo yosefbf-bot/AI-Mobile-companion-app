@@ -12,6 +12,10 @@ import com.example.ui.screens.chats.ChatListScreen
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -100,18 +104,22 @@ class ChatPreviewCompositionTest {
         val cipher = TestVaultCipher()
         val encrypted = cipher.encrypt("Synthetic asynchronous preview")
         val dispatcher = java.util.concurrent.Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "synthetic-preview") }.asCoroutineDispatcher()
+        // Compose's test frame/apply interceptors control effect continuations.
+        // Own the worker scope explicitly so this test observes the real executor,
+        // while the UI still suspends for and renders its asynchronous result.
+        val loader = CoroutineScope(SupervisorJob() + dispatcher)
         try {
             rule.setContent { MyApplicationTheme {
                 ChatListScreen(listOf(EncryptedChatSession("async", "Synthetic async", lastMessagePreviewEncrypted = encrypted)),
                     decryptText = { error("Composition must not decrypt production previews.") },
                     onSessionClick = {}, onCreateNewSession = {}, onDeleteSession = {},
-                    loadDisplayText = { payload -> kotlinx.coroutines.withContext(dispatcher) {
+                    loadDisplayText = { payload -> loader.async {
                         assertTrue(Thread.currentThread().name.startsWith("synthetic-preview"))
                         cipher.decrypt(payload)
-                    } })
+                    }.await() })
             } }
             rule.waitUntil(5_000) { rule.onAllNodesWithText("Synthetic asynchronous preview").fetchSemanticsNodes().isNotEmpty() }
             rule.onNodeWithText("Synthetic asynchronous preview").assertIsDisplayed()
-        } finally { dispatcher.close() }
+        } finally { loader.cancel(); dispatcher.close() }
     }
 }

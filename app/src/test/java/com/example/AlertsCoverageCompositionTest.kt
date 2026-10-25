@@ -1,6 +1,7 @@
 package com.example
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.example.data.model.AlertCoverage
@@ -23,6 +24,14 @@ import org.robolectric.annotation.Config
 class AlertsCoverageCompositionTest {
     @get:Rule val rule = createComposeRule(effectContext = StandardTestDispatcher())
 
+    private fun updateState(change: () -> Unit) {
+        // These writes originate outside composition. Deliver their snapshot
+        // notification and a frame before inspecting the new semantics.
+        rule.runOnIdle { change(); Snapshot.sendApplyNotifications() }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+    }
+
     @Test fun offlineUnknownDeniedDisabledAndIncompleteCoverageNeverBecomeAnAllClear() {
         val connection = mutableStateOf(ConnectionStatus.DISCONNECTED)
         val coverage = mutableStateOf(AlertCoverage())
@@ -30,13 +39,13 @@ class AlertsCoverageCompositionTest {
             AlertsScreen(emptyList(), connection.value, "synthetic", {}, { _, _ -> }, {}, {}, coverage = coverage.value)
         } }
         rule.onNodeWithTag("alert_coverage").assertTextContains("coverage unavailable", substring = true)
-        rule.runOnIdle { connection.value = ConnectionStatus.CONNECTED }
+        updateState { connection.value = ConnectionStatus.CONNECTED }
         rule.onNodeWithTag("alert_coverage").assertTextContains("coverage is unknown", substring = true)
-        rule.runOnIdle { coverage.value = AlertCoverage(scopeGranted = false) }
+        updateState { coverage.value = AlertCoverage(scopeGranted = false) }
         rule.onNodeWithTag("alert_coverage").assertTextContains("not granted", substring = true)
-        rule.runOnIdle { coverage.value = AlertCoverage(true, false, false, 0, false) }
+        updateState { coverage.value = AlertCoverage(true, false, false, 0, false) }
         rule.onNodeWithTag("alert_coverage").assertTextContains("monitoring is disabled", substring = true)
-        rule.runOnIdle { coverage.value = AlertCoverage(true, true, false, 200, true) }
+        updateState { coverage.value = AlertCoverage(true, true, false, 200, true) }
         rule.onNodeWithTag("alert_coverage").assertTextContains("coverage is incomplete", substring = true)
         rule.onNodeWithTag("alert_coverage").assertTextContains("Desktop total: 200", substring = true)
         rule.onNodeWithTag("alert_coverage").assertTextContains("limited set", substring = true)

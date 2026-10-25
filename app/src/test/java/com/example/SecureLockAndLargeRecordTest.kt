@@ -94,10 +94,11 @@ class SecureLockAndLargeRecordTest {
             val rows = repository.documents.first()
             assertEquals(6, rows.size)
             assertTrue(rows.all { it.encryptedContent.isEmpty() })
-            assertFalse(queries.any { it.first.contains("substr(encryptedContent", true) || it.first.contains("length(encryptedContent)", true) })
+            val inventoryQueries = synchronized(queries) { queries.toList() }
+            assertFalse(inventoryQueries.any { it.first.contains("substr(encryptedContent", true) || it.first.contains("length(encryptedContent)", true) })
             val opened = repository.openDocument("synthetic-2")!!
             assertEquals(text, opened.second)
-            val bodyReads = queries.filter { it.first.contains("substr(encryptedContent", true) }
+            val bodyReads = synchronized(queries) { queries.toList() }.filter { it.first.contains("substr(encryptedContent", true) }
             assertTrue(bodyReads.isNotEmpty())
             assertTrue(bodyReads.all { it.second.last() == "synthetic-2" })
         } finally { repository.close(); db.close() }

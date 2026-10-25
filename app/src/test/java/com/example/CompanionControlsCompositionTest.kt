@@ -1,6 +1,7 @@
 package com.example
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import com.example.data.local.entity.DesktopTask
@@ -34,7 +35,9 @@ class CompanionControlsCompositionTest {
         } }
         rule.onNodeWithTag("start_agent_fab").assertDoesNotExist()
         listOf("Cancel", "Retry", "Approve", "Reject").forEach { rule.onNodeWithText(it).assertDoesNotExist() }
-        rule.runOnIdle { connection.value = ConnectionStatus.DEMO }
+        rule.runOnIdle { connection.value = ConnectionStatus.DEMO; Snapshot.sendApplyNotifications() }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
         rule.onNodeWithTag("start_agent_fab").assertExists()
     }
 

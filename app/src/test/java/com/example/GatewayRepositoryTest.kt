@@ -227,8 +227,16 @@ class GatewayRepositoryTest {
             scheduler.runCurrent()
             while (repository.isSyncing.value) { delay(1); scheduler.runCurrent() }
             // Also resume the polling parent's join, so the next interval is armed before advancing time.
-            scheduler.runCurrent()
+            settlePolling(scheduler)
         }
+    }
+
+    /** The polling loop reads pending counts through Room's real query executor before it arms
+     *  its next virtual-time interval; pump briefly so that interval exists before time advances. */
+    private suspend fun settlePolling(scheduler: TestCoroutineScheduler) {
+        val until = System.nanoTime() + 250_000_000L
+        while (System.nanoTime() < until) { scheduler.runCurrent(); delay(2) }
+        scheduler.runCurrent()
     }
 
     /** Hold exactly one dispatcher hop; other workspace changes can complete before it resumes. */
@@ -524,6 +532,7 @@ class GatewayRepositoryTest {
         repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase,
             cipher = cipher, dispatcher = StandardTestDispatcher(scheduler))
         completeScheduledJob(scheduler, repository.onUnlocked())
+        settlePolling(scheduler)
         val first = statusReads.get()
         beforeStatusResponse = { repository.stopStreaming() }
         scheduler.advanceTimeBy(30_000); scheduler.runCurrent()
@@ -537,6 +546,7 @@ class GatewayRepositoryTest {
         scheduler.advanceTimeBy(900_000); scheduler.runCurrent()
         assertEquals(first + 2, statusReads.get())
         completeScheduledJob(scheduler, repository.onUnlocked())
+        settlePolling(scheduler)
         val reopened = statusReads.get()
         scheduler.advanceTimeBy(30_000); scheduler.runCurrent()
         completeScheduledCheck(scheduler)

@@ -34,8 +34,11 @@ class VaultOpeningBarrierTest {
                 queries.clear()
                 repository.onUnlocked().join()
                 assertTrue(repository.vaultReady.value)
-                assertEquals(1, queries.count { it.contains("SELECT id FROM documents WHERE storageVersion = 0", true) })
-                assertFalse(queries.any { it.contains("substr(encryptedContent", true) || it.contains("length(encryptedContent)", true) })
+                // synchronizedList protects individual operations, not iteration
+                // while Room's background invalidation/polling queries append.
+                val observed = synchronized(queries) { queries.toList() }
+                assertEquals(1, observed.count { it.contains("SELECT id FROM documents WHERE storageVersion = 0", true) })
+                assertFalse(observed.any { it.contains("substr(encryptedContent", true) || it.contains("length(encryptedContent)", true) })
                 repository.onLocked()
             }
         } finally { repository.close(); db.close() }
