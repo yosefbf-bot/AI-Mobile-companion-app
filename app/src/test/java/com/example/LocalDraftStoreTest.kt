@@ -20,6 +20,23 @@ import java.util.concurrent.atomic.AtomicBoolean
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class LocalDraftStoreTest {
+    @Test fun staleLoadCannotTurnOffLockedEviction() = runBlocking {
+        val db = database(); var ready = true; var lockDuringScope = false
+        lateinit var drafts: LocalDraftStore
+        drafts = LocalDraftStore(PolicyTestCipher(), { route ->
+            check(ready); val scope = DraftScope(db, "SYNTHETIC:$route", 1)
+            if (lockDuringScope) { ready = false; drafts.onLocked() }
+            scope
+        }, { check(ready && it.workspace == 1L) }, 60_000)
+        try {
+            drafts.updateFields(drafts.load("pending").token, "{\"text\":\"SYNTHETIC preserved\"}", null, true)
+            lockDuringScope = true
+            try { drafts.load("late"); fail("The stale load must be rejected") } catch (_: IllegalStateException) { }
+            drafts.flush(); assertEquals(0L, drafts.retainedBytes())
+            ready = true; lockDuringScope = false
+            assertEquals("SYNTHETIC preserved", JSONObject(drafts.load("pending").form).getString("text"))
+        } finally { drafts.close(); db.close() }
+    }
     @Test fun lockEvictsOnlyDurableDraftsAndTheirEvidenceAndReloadsExactBytes() = runBlocking {
         val db = database(); val cipher = PolicyTestCipher(); val drafts = store(db, cipher)
         try {
