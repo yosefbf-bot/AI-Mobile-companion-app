@@ -1,3 +1,21 @@
+# Polling CI repair - October 25, 2026
+
+Codex continues the owner's performance/reliability request from PR16 head
+f58fbe144f26faf5514b27dfe5466c66f1e5ad45; authoritative main54500de.
+Run40237553107 failed GatewayRepositoryTest at line509: expected6 status reads,
+actual5. The virtual clock could advance before Room's real query executor
+armed the replacement polling interval. Two polling fixtures now use fresh real
+Room databases with inline query dispatch; HTTPS and all interval, cancellation,
+manual-sync and locked-workspace assertions remain unchanged. The 250ms sleep
+heuristic is removed. Production behavior, dependencies and schemas are unchanged.
+
+Independent read-only review found no confirmed issue. Local CI policy tests
+passed42/42. JDK17/Gradle could not reach compilation on this PC: the Windows
+Java selector failed its internal loopback connection (SocketException: Invalid
+argument: connect). Hosted unit/lint/build, emulator and Windows interop remain
+required for this new head; do not report the local build as passed. No installed
+app, phone data, signing key or pairing changed.
+
 # Speed/resource/reliability program - October 25, 2026
 
 Coordinator Claude Code with implementer Codex CLI on branch

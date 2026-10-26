@@ -231,11 +231,23 @@ class GatewayRepositoryTest {
         }
     }
 
-    /** The polling loop reads pending counts through Room's real query executor before it arms
-     *  its next virtual-time interval; pump briefly so that interval exists before time advances. */
+    /** Polling tests keep Room query dispatch inline so advancing the virtual clock cannot
+     *  outrun the queries that arm the next interval. Network IO still completes normally. */
+    private fun usePollingScheduler(scheduler: TestCoroutineScheduler, mode: BatteryOptimizationMode) {
+        repository.close()
+        database.close()
+        demoDatabase.close()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        fun pollingDatabase() = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries().setQueryExecutor { task -> task.run() }.build()
+        database = pollingDatabase()
+        demoDatabase = pollingDatabase()
+        configuration.save(config.copy(batteryMode = mode))
+        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase,
+            cipher = cipher, dispatcher = StandardTestDispatcher(scheduler))
+    }
+
     private suspend fun settlePolling(scheduler: TestCoroutineScheduler) {
-        val until = System.nanoTime() + 250_000_000L
-        while (System.nanoTime() < until) { scheduler.runCurrent(); delay(2) }
         scheduler.runCurrent()
     }
 
@@ -484,10 +496,7 @@ class GatewayRepositoryTest {
 
     @Test fun changingPollingModeRestartsItsIntervalAndManualLeavesNoPeriodicChecks() = runBlocking {
         val scheduler = TestCoroutineScheduler()
-        repository.close()
-        configuration.save(config.copy(batteryMode = BatteryOptimizationMode.MANUAL_ONLY))
-        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase,
-            cipher = cipher, dispatcher = StandardTestDispatcher(scheduler))
+        usePollingScheduler(scheduler, BatteryOptimizationMode.MANUAL_ONLY)
         completeScheduledJob(scheduler, repository.onUnlocked())
         completeScheduledJob(scheduler, repository.updateConfig(repository.nodeConfig.value.copy(batteryMode = BatteryOptimizationMode.REAL_TIME)))
         scheduler.advanceTimeBy(10_000); scheduler.runCurrent()
@@ -527,10 +536,7 @@ class GatewayRepositoryTest {
 
     @Test fun stoppedForegroundCheckCanPollAgainButLockedWorkspaceCannot() = runBlocking {
         val scheduler = TestCoroutineScheduler()
-        repository.close()
-        configuration.save(config.copy(batteryMode = BatteryOptimizationMode.REAL_TIME))
-        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase,
-            cipher = cipher, dispatcher = StandardTestDispatcher(scheduler))
+        usePollingScheduler(scheduler, BatteryOptimizationMode.REAL_TIME)
         completeScheduledJob(scheduler, repository.onUnlocked())
         settlePolling(scheduler)
         val first = statusReads.get()
