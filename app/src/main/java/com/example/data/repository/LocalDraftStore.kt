@@ -34,6 +34,7 @@ internal class LocalDraftStore(private val cipher: VaultCipher,
     private data class Write(val database: AppDatabase, val row: LocalDraft, val evidence: LocalDraftEvidence?)
     private data class Encoded(val row: LocalDraft, val evidence: LocalDraftEvidence?)
     private val guard = Any()
+    private var locked = false
     private val entries = linkedMapOf<String, Entry>()
     private val evidenceCache = linkedMapOf<String, LocalDraftEvidence>()
     private val pending = linkedMapOf<String, Write>()
@@ -50,6 +51,7 @@ internal class LocalDraftStore(private val cipher: VaultCipher,
 
     suspend fun load(route: String): LocalDraftSnapshot {
         val scope = scopeFor(route)
+        synchronized(guard) { checkScope(LocalDraftToken(scope.id, 0, 0, scope.workspace)); locked = false }
         if (synchronized(guard) { entries[scope.id] } == null) {
             val (row, evidence) = withContext(Dispatchers.IO) { scope.database.withTransaction {
                 val dao = scope.database.localDraftDao()
@@ -287,6 +289,7 @@ internal class LocalDraftStore(private val cipher: VaultCipher,
                     entries[write.row.id]?.let { if ((it.disk?.revision ?: -1) <= committed.revision) it.disk = committed; it.error = null }
                     if (admitted[write.row.id]?.row == write.row) admitted.remove(write.row.id)
                     if (inFlight[write.row.id]?.row == write.row) inFlight.remove(write.row.id)
+                    if (locked) trimDurable()
                     changes.value++
                 }
                 prune(write.database)
@@ -311,7 +314,15 @@ internal class LocalDraftStore(private val cipher: VaultCipher,
         synchronized(guard) { val needed = referencedEvidence(); evidenceCache.keys.retainAll(needed) }
     }
     suspend fun flush() { drain(); synchronized(guard) { check(pending.isEmpty() && admitted.isEmpty() && inFlight.isEmpty()) { FAILURE } } }
-    fun onLocked() { synchronized(guard) { entries.values.forEach { it.evidence = null }; wake.trySend(Unit) } }
+    private fun trimDurable() {
+        entries.entries.removeAll { (id, entry) ->
+            entry.error == null && (entry.ram == entry.disk || entry.disk == null && entry.ram.revision == 0L) &&
+                id !in pending && id !in admitted && id !in inFlight
+        }
+        evidenceCache.keys.retainAll(referencedEvidence())
+    }
+    internal fun retainedBytes(): Long = synchronized(guard) { ramBytes() }
+    fun onLocked() { synchronized(guard) { locked = true; entries.values.forEach { it.evidence = null }; trimDurable(); wake.trySend(Unit) } }
     suspend fun rewrapMemory(rewrite: (String) -> String, checkAccess: () -> Unit = {}) {
         val snapshot = synchronized(guard) {
             checkAccess(); check(pending.isEmpty() && admitted.isEmpty() && inFlight.isEmpty()) { FAILURE }

@@ -13,6 +13,7 @@ import com.sun.net.httpserver.HttpsServer
 import com.sun.net.httpserver.HttpsConfigurator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.*
@@ -123,6 +124,18 @@ class BootstrapPairingTest {
     }
     @After fun cleanup() { beforeSave=null;beforeDecrypt=null;repository.close();database.close();server.stop(0);executor.shutdownNow();storage.clear() }
     private suspend fun open() { repository.onUnlocked().join();assertTrue(repository.vaultReady.value) }
+
+    @Test fun activeRoomCollectorResubscribesWhenPairingAdvancesWorkspaceGeneration() = runBlocking {
+        open()
+        val observed = kotlinx.coroutines.channels.Channel<List<String>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val collector = launch(Dispatchers.Default) { repository.chatSessions.collect { rows -> observed.send(rows.map { it.id }) } }
+        try {
+            withTimeout(10_000) { observed.receive() }
+            repository.pairSecure(link())
+            val id = repository.createNewSession("SYNTHETIC after pairing")
+            withTimeout(10_000) { while (id !in observed.receive()) { } }
+        } finally { collector.cancelAndJoin(); observed.close() }
+    }
     private fun unchanged() { assertEquals(previous,repository.nodeConfig.value);assertEquals(previous,storage.load()) }
     private class ControlledDispatcher : CoroutineDispatcher() {
         private val tasks = LinkedBlockingQueue<Runnable>()

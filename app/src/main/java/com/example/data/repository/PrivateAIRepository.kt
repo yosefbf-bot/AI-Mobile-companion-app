@@ -60,7 +60,10 @@ class PrivateAIRepository(
     private val captureDelivery = Mutex()
     private val sync = Mutex()
     private var opening: Job? = null
-    @Volatile private var workspaceGeneration = 0L
+    private val workspaceEpoch = MutableStateFlow(0L)
+    private var workspaceGeneration: Long
+        get() = workspaceEpoch.value
+        set(value) { workspaceEpoch.value = value }
     private var polling: Job? = null
     private val pendingWake = Channel<Unit>(Channel.CONFLATED)
     @Volatile private var historiesPending = false
@@ -107,18 +110,23 @@ class PrivateAIRepository(
     private val _modelProcessingMode = MutableStateFlow("Desktop settings")
     val modelProcessingMode = _modelProcessingMode.asStateFlow()
 
-    val chatSessions = selectedDatabase.flatMapLatest { it.chatDao().getAllSessions() }
-        .combine(vaultReady) { rows, ready -> visible(ready, emptyList()) { rows.map { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
-    val documents = selectedDatabase.flatMapLatest { it.documentDao().getAllDocuments() }
-        .combine(vaultReady) { rows, ready -> visible(ready, emptyList()) { rows.map { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
-    val tasks = selectedDatabase.flatMapLatest { it.taskDao().getAllTasks() }
-        .combine(vaultReady) { rows, ready -> visible(ready, emptyList()) { rows.map { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
-    val notifications = selectedDatabase.flatMapLatest { it.taskDao().getAllNotifications() }
-        .combine(vaultReady) { rows, ready -> visible(ready, emptyList()) { rows.map { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
+    val chatSessions = unlockedRows(emptyList(), { it.chatDao().getAllSessions() }) { rows -> rows.map { VaultRecords.decode(it, cipher) } }
+    val documents = unlockedRows(emptyList(), { it.documentDao().getAllDocuments() }) { rows -> rows.map { VaultRecords.decode(it, cipher) } }
+    val tasks = unlockedRows(emptyList(), { it.taskDao().getAllTasks() }) { rows -> rows.map { VaultRecords.decode(it, cipher) } }
+    val notifications = unlockedRows(emptyList(), { it.taskDao().getAllNotifications() }) { rows -> rows.map { VaultRecords.decode(it, cipher) } }
+
+    // A locked UI may still collect these flows. Cancel Room subscriptions and
+    // release their encrypted row lists; reopen them immediately after readiness.
+    private fun <R, T> unlockedRows(empty: T, source: (AppDatabase) -> Flow<R>, decode: (R) -> T): Flow<T> =
+        combine(vaultReady, workspaceEpoch, selectedDatabase) { ready, generation, selected -> Triple(ready, generation, selected) }
+            .flatMapLatest { (ready, generation, selected) ->
+            if (!ready) flowOf(empty) else {
+                source(selected).map { rows ->
+                    if (generation != workspaceGeneration || selected !== selectedDatabase.value) empty
+                    else visible(true, empty) { decode(rows) }
+                }
+            }
+        }.flowOn(dispatcher)
 
     private val _alertCoverage = MutableStateFlow(AlertCoverage())
     val alertCoverage = _alertCoverage.asStateFlow()
@@ -283,15 +291,9 @@ class PrivateAIRepository(
         catch (e: Exception) { if (!_vaultReady.value || generation != workspaceGeneration) empty else throw e }
     }
 
-    fun getMessagesForSession(sessionId: String) = selectedDatabase.flatMapLatest { it.chatDao().getMessagesForSession(sessionId) }
-        .combine(vaultReady) { rows, ready -> visible(ready, emptyList()) { rows.map { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
-    fun getSessionById(sessionId: String) = selectedDatabase.flatMapLatest { it.chatDao().getSessionById(sessionId) }
-        .combine(vaultReady) { row, ready -> visible(ready, null) { row?.let { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
-    fun getDocumentById(id: String) = selectedDatabase.flatMapLatest { it.documentDao().getDocumentById(id) }
-        .combine(vaultReady) { row, ready -> visible(ready, null) { row?.let { VaultRecords.decode(it, cipher) } } }
-        .flowOn(dispatcher)
+    fun getMessagesForSession(sessionId: String) = unlockedRows(emptyList(), { it.chatDao().getMessagesForSession(sessionId) }) { rows -> rows.map { VaultRecords.decode(it, cipher) } }
+    fun getSessionById(sessionId: String) = unlockedRows(null, { it.chatDao().getSessionById(sessionId) }) { row -> row?.let { VaultRecords.decode(it, cipher) } }
+    fun getDocumentById(id: String) = unlockedRows(null, { it.documentDao().getDocumentById(id) }) { row -> row?.let { VaultRecords.decode(it, cipher) } }
 
     suspend fun openDocument(id: String): Pair<EncryptedDocument, String>? = withTrackedStorage { workspace ->
         val row = workspace.database.documentDao().hydratedById(id)?.let { VaultRecords.decode(it, cipher) } ?: return@withTrackedStorage null
