@@ -52,6 +52,9 @@ import androidx.compose.runtime.LaunchedEffect
 import com.example.data.model.ChatAttachment
 import com.example.ui.components.*
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,11 +88,35 @@ fun DocumentVaultScreen(
     loadUnsentDraft: () -> String = { "" }, onUnsentDraftChange: (String) -> Unit = {},
     draftState: LocalDraftFormState? = null,
     onDraftFieldsChange: ((String, ChatAttachment?) -> Unit)? = null,
-    lastSavedCaptureId: String? = null, documentSaved: Long = 0
+    lastSavedCaptureId: String? = null, documentSaved: Long = 0,
+    loadDocument: (suspend (String) -> Pair<EncryptedDocument, String>?)? = null
 ) {
     val context = LocalContext.current
     var showAddDialog by remember { mutableStateOf(false) }
     var selectedDocForView by remember { mutableStateOf<EncryptedDocument?>(null) }
+    var openedDoc by remember { mutableStateOf<Triple<EncryptedDocument, String, String>?>(null) }
+    var openError by remember { mutableStateOf<String?>(null) }
+    var shareRequested by remember { mutableStateOf(false) }
+    LaunchedEffect(selectedDocForView) {
+        openedDoc = null; openError = null
+        val selected = selectedDocForView ?: return@LaunchedEffect
+        try {
+            val loaded = if (loadDocument != null) loadDocument(selected.id)
+                else withContext(Dispatchers.IO) { selected to decryptText(selected.encryptedContent) }
+            checkNotNull(loaded) { "Document no longer available." }
+            val preview = withContext(Dispatchers.IO) { vaultDocumentPreview(loaded.first, loaded.second) }
+            openedDoc = Triple(loaded.first, loaded.second, preview)
+            if (shareRequested) {
+                shareRequested = false
+                shareDocument(context, loaded.first.fileName, if (loaded.first.fileType.startsWith("CAPTURE_")) preview else loaded.second)
+                selectedDocForView = null
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            shareRequested = false
+            openError = "The protected document could not be opened. Unlock and retry."
+        }
+    }
 
     val restored = remember { unsentForm(loadUnsentDraft()) }
     var newDocTitle by remember { mutableStateOf(restored.optString("title")) }
@@ -255,11 +282,10 @@ fun DocumentVaultScreen(
                     items(documents, key = { it.id }) { doc ->
                         DocumentItemCard(
                             document = doc,
-                            onClick = { selectedDocForView = doc },
+                            onClick = { shareRequested = false; selectedDocForView = doc },
                             onDelete = { onDeleteDocument(doc.id) },
                             onShare = {
-                                val decrypted = vaultDocumentShareText(doc, decryptText(doc.encryptedContent))
-                                shareDocument(context, doc.fileName, decrypted)
+                                shareRequested = true; selectedDocForView = doc
                             }
                         )
                     }
@@ -282,8 +308,9 @@ fun DocumentVaultScreen(
 
     // View Document Dialog with Android Share & Send to Chat
     selectedDocForView?.let { doc ->
-        val originalText = remember(doc.encryptedContent) { decryptText(doc.encryptedContent) }
-        val decryptedText = remember(doc,originalText) { vaultDocumentPreview(doc, originalText) }
+        val opened = openedDoc?.takeIf { it.first.id == doc.id }
+        val originalText = opened?.second.orEmpty()
+        val decryptedText = opened?.third ?: openError ?: "Opening protected document…"
 
         AlertDialog(
             onDismissRequest = { selectedDocForView = null },
@@ -362,10 +389,10 @@ fun DocumentVaultScreen(
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (onSendDocToChat != null && !doc.fileType.startsWith("CAPTURE_")) {
-                        TextButton(onClick = { onSendDocToChat(doc.fileName, vaultDocumentChatPreview(originalText)); selectedDocForView = null }) { Text("Send preview to chat") }
+                        TextButton(enabled = opened != null, onClick = { onSendDocToChat(doc.fileName, vaultDocumentChatPreview(originalText)); selectedDocForView = null }) { Text("Send preview to chat") }
                     }
-                    OutlinedButton(onClick = {
-                        shareDocument(context, doc.fileName, vaultDocumentShareText(doc,originalText))
+                    OutlinedButton(enabled = opened != null, onClick = {
+                        shareDocument(context, doc.fileName, if (doc.fileType.startsWith("CAPTURE_")) opened?.third.orEmpty() else originalText)
                     }) {
                         Icon(imageVector = Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))

@@ -6,10 +6,14 @@ import com.example.data.local.entity.DesktopTask
 import com.example.data.model.DesktopNodeConfig
 import com.example.data.model.NodeStats
 import com.example.data.model.FollowUpNotification
+import com.example.data.model.AlertCoverage
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.collect
 import okhttp3.Call
 import okhttp3.Callback
@@ -36,7 +40,7 @@ object GatewayEndpoints {
     const val ALERTS = "/mobile/api/v1/alerts"
 }
 
-data class DesktopSyncPackage(val newNotifications: List<DesktopNotification>, val updatedTasks: List<DesktopTask>)
+data class DesktopSyncPackage(val newNotifications: List<DesktopNotification>, val updatedTasks: List<DesktopTask>, val alertCoverage: AlertCoverage = AlertCoverage())
 data class GatewayReply(val reply: String, val sessionId: String, val requestId: String?, val provider: String?, val model: String?, val incomplete: Boolean)
 class GatewayException(val code: String, val httpStatus: Int = 0, message: String) : IOException(message)
 
@@ -44,11 +48,34 @@ data class GatewayAuthorizationEpoch(val authentication: Long = 0, val workspace
 class GatewayRequestLease internal constructor(internal val epoch: GatewayAuthorizationEpoch, internal val cancellation: Long)
 
 class DesktopNodeService(
+    private val elapsedMillis: () -> Long = android.os.SystemClock::elapsedRealtime,
     private val authorizationEpoch: (DesktopNodeConfig) -> GatewayAuthorizationEpoch? = { GatewayAuthorizationEpoch() }
 ) {
     private val demo = DemoNodeService()
     private val calls = java.util.concurrent.ConcurrentHashMap.newKeySet<Call>()
     private val cancellationGeneration = AtomicLong()
+    private val requestBudget = Mutex()
+    private val requestTimes = java.util.ArrayDeque<Long>()
+    @Volatile private var retryNotBefore = 0L
+
+    fun retryDelayMillis(): Long = (retryNotBefore - elapsedMillis()).coerceAtLeast(0)
+
+    private suspend fun reserveRequest(config: DesktopNodeConfig, lease: GatewayRequestLease) {
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            requireAuthorized(config, lease)
+            if (retryDelayMillis() > 0) throw GatewayException("RATE_LIMITED", 429, errorMessage("RATE_LIMITED", 429))
+            val wait = requestBudget.withLock {
+                val now = elapsedMillis()
+                while (requestTimes.isNotEmpty() && now - requestTimes.peekFirst() >= 60_000L) requestTimes.removeFirst()
+                // Leave room below the gateway's 120/minute limit for pairing and other clients.
+                if (requestTimes.size < 100) { requestTimes.addLast(now); 0L }
+                else (60_000L - (now - requestTimes.peekFirst())).coerceAtLeast(1)
+            }
+            if (wait == 0L) return
+            delay(wait)
+        }
+    }
 
     fun cancelAll() { cancellationGeneration.incrementAndGet(); calls.forEach { it.cancel() } }
 
@@ -107,6 +134,8 @@ class DesktopNodeService(
         requireAuthorized(config, lease)
         if (config.simulatedNodeEnabled) throw GatewayException("DEMO", message = "Demo mode cannot contact the desktop.")
         require(endpoint.startsWith("/mobile/api/v1/") && !endpoint.contains("?") && !endpoint.contains("#"))
+        reserveRequest(config, lease)
+        requireAuthorized(config, lease)
         val securedClient = client(config, endpoint == GatewayEndpoints.CHAT_SEND)
         val request = Request.Builder().url("https://${config.hostIp}:${config.port}$endpoint")
             .header("Host", "${config.hostIp}:${config.port}")
@@ -143,6 +172,12 @@ class DesktopNodeService(
                             val json = try { JSONObject(source.readUtf8()) } catch (_: Exception) { throw GatewayException("PROTOCOL", message = "Desktop returned an invalid response.") }
                             if (!response.isSuccessful) {
                                 val code = json.optJSONObject("error")?.optString("code")?.takeIf { it.matches(Regex("[A-Z0-9_]{1,60}")) } ?: "HTTP_${response.code}"
+                                if (response.code == 429) {
+                                    val seconds = response.header("Retry-After")?.toLongOrNull()?.coerceIn(1, 3600) ?: 60L
+                                    synchronized(this@DesktopNodeService) {
+                                        retryNotBefore = maxOf(retryNotBefore, elapsedMillis() + seconds * 1000)
+                                    }
+                                }
                                 throw GatewayException(code, response.code, errorMessage(code, response.code))
                             }
                             requireAuthorized(config, lease)
@@ -186,8 +221,9 @@ class DesktopNodeService(
         }
         val lease = authorizationLease(config)
         val tasks = if ("tasks" in stats.scopes) parseTasks(request(config, GatewayEndpoints.TASKS, lease = lease)) else emptyList()
-        val alerts = if ("alerts" in stats.scopes) parseAlerts(request(config, GatewayEndpoints.ALERTS, lease = lease)) else emptyList()
-        return DesktopSyncPackage(alerts, tasks)
+        val alerts = if ("alerts" in stats.scopes) request(config, GatewayEndpoints.ALERTS, lease = lease) else null
+        return DesktopSyncPackage(alerts?.let(::parseAlerts) ?: emptyList(), tasks,
+            alerts?.let(::parseAlertCoverage) ?: AlertCoverage(scopeGranted = false))
     }
 
     suspend fun fetchNotifications(config: DesktopNodeConfig): List<FollowUpNotification> {
@@ -256,11 +292,25 @@ class DesktopNodeService(
                     timestamp = 0, severity = row.optString("severity", "INFO").uppercase(), category = "CLINICAL")
             }
         }
-        private fun errorMessage(code: String, status: Int): String = when {
+        fun parseAlertCoverage(json: JSONObject) = AlertCoverage(
+            scopeGranted = true,
+            monitoringEnabled = json.opt("monitoringEnabled") as? Boolean,
+            isSurveillanceComplete = json.opt("isSurveillanceComplete") as? Boolean,
+            total = when (val total = json.opt("total")) {
+                is Int -> total.takeIf { it >= 0 }
+                is Long -> total.takeIf { it in 0..Int.MAX_VALUE.toLong() }?.toInt()
+                else -> null
+            },
+            truncated = json.opt("truncated") as? Boolean
+        )
+        internal fun errorMessage(code: String, status: Int): String = when {
             status == 401 -> "This phone is unpaired or its access was revoked. Pair again on the desktop."
             status == 423 -> "The desktop is locked. Unlock it before using the companion."
             status == 403 -> "The paired phone does not have permission for this operation."
             status == 429 -> "Desktop request limit reached. Wait before retrying."
+            code == "COMPANION_PAUSED" -> "Companion processing is paused on the PC. Resume it in desktop Settings; this request remains pending."
+            code in setOf("LOW_MEMORY", "MEMORY_PRESSURE", "INSUFFICIENT_MEMORY") -> "The PC has too little free memory. Close other workloads or unload a model on the PC, then retry."
+            code in setOf("SPEECH_SETUP", "SPEECH_SETUP_REQUIRED", "SPEECH_UNAVAILABLE", "MEETING_SPEECH_UNAVAILABLE") -> "Set up the verified offline speech runtime and model in desktop Meetings settings, then retry. Saved recordings remain on this phone."
             code == "INTERRUPTED" -> "Desktop execution was interrupted. Review the conversation before deciding to send a new request."
             code == "CHANGED" -> "This request ID was already used with different contents."
             code == "BUSY" -> "Desktop is busy. This request remains pending."

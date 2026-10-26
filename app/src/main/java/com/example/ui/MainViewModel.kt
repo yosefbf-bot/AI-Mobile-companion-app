@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.ui.pairing.PairingUiState
 import com.example.ui.components.acknowledgeChatDraft
 import com.example.ui.components.acknowledgeFormFields
@@ -68,6 +70,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val documents = repository.documents.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val tasks = repository.tasks.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val notifications = repository.notifications.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val alertCoverage get() = repository.alertCoverage
     private val _activeSessionId = MutableStateFlow<String?>(null)
     val activeSessionId = _activeSessionId.asStateFlow()
     val activeSessionMessages = _activeSessionId.flatMapLatest { id -> id?.let(repository::getMessagesForSession) ?: flowOf(emptyList()) }
@@ -121,7 +124,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try { action(); if (message != null) _userFeedback.value = message }
             catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                _userFeedback.value = if (e is GatewayException) e.message else "This request could not be completed. Check the protected workspace and pairing details."
+                _userFeedback.value = if (e is GatewayException || e is EvidenceValidationException) e.message else "This request could not be completed. Check the protected workspace and pairing details."
             } finally { activeOperations--; _workflowBusy.value = activeOperations > 0 }
         }
     }
@@ -174,6 +177,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun decrypt(content: String): String = try { if (vaultReady.value) EncryptionManager.decrypt(content) else "" }
         catch (_: VaultUnavailableException) { biometricAuthManager.lock(); "" }
+    suspend fun loadDisplayText(content: String): String = try { repository.decryptDisplayText(content) }
+        catch (_: VaultUnavailableException) { biometricAuthManager.lock(); "" }
     fun decryptAttachmentBitmap(content: String): Bitmap? = if (vaultReady.value) AttachmentUtils.base64ToBitmap(decrypt(content)) else null
     fun createNewChat(title: String, initialPrompt: String? = null) {
         val submitted = draftController.currentForm("chat:new-title")
@@ -201,10 +206,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (_selectedDocument.value?.id == id) _selectedDocument.value = null
         repository.deleteDocument(id)
     }
-    fun updateNodeConfig(config: DesktopNodeConfig) = operation("Pairing settings saved. Check the connection to verify desktop access.") {
+    fun updateNodeConfig(config: DesktopNodeConfig, onSaved: () -> Unit = {}) = operation("Pairing settings saved. Check the connection to verify desktop access.") {
         if (config.simulatedNodeEnabled != nodeConfig.value.simulatedNodeEnabled) { _activeSessionId.value = null; _selectedDocument.value = null }
-        repository.updateConfig(config)
+        repository.updateConfigAndWait(config)
         configureNotifications(config)
+        if (vaultReady.value && EncryptionManager.hasCurrentAccess()) onSaved()
     }
 
     fun beginPairing(link: String) {
@@ -245,11 +251,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _pairingState.value = PairingUiState()
     }
     fun toggleSimulatedDesktop(enabled: Boolean) = operation("Workspace changed. Demo uses a separate database and never contacts the desktop.") {
-        _activeSessionId.value = null; _selectedDocument.value = null; repository.toggleSimulatedDesktopNode(enabled)
+        _activeSessionId.value = null; _selectedDocument.value = null
+        repository.updateConfigAndWait(repository.nodeConfig.value.copy(simulatedNodeEnabled = enabled))
         configureNotifications(repository.nodeConfig.value)
     }
     fun setSecureClinicalMode(enabled: Boolean) = operation("Phone chat privacy preference updated. Desktop processing policy remains controlled on the PC.") {
-        repository.setSecureClinicalMode(enabled).join()
+        repository.updateConfigAndWait(repository.nodeConfig.value.copy(secureClinicalMode = enabled))
     }
     fun setModelProcessingMode(mode: String) = operation { repository.setModelProcessingMode(mode) }
     fun startAgent(name: String) = operation("Demo task created. No workstation execution occurred.") { repository.startAgent(name) }
@@ -288,9 +295,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             draftController.acknowledge(route, submitted) { now, before -> acknowledgeFormFields(now, before, setOf("recipient", "subject", "body")) }
         }
     fun acknowledgeFollowUp(id: String) = operation("Follow-up notification acknowledged. The action itself remains open.") { repository.acknowledgeFollowUp(id) }
-    private fun configureNotifications(config: DesktopNodeConfig) {
+    private suspend fun configureNotifications(config: DesktopNodeConfig) {
         val enabled = config.backgroundNotificationsEnabled && !config.simulatedNodeEnabled && config.notificationKey.isNotBlank()
-        RestrictedNotificationStore(getApplication()).save(config, enabled)
+        withContext(Dispatchers.IO) { RestrictedNotificationStore(getApplication()).save(config, enabled) }
         FollowUpNotifications.configure(getApplication(), enabled)
     }
     override fun onCleared() { repository.close(); super.onCleared() }

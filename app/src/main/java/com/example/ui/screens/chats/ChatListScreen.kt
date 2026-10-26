@@ -59,7 +59,8 @@ fun ChatListScreen(
     onSessionClick: (String) -> Unit,
     onCreateNewSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
-    modifier: Modifier = Modifier, draftController: com.example.ui.LocalDraftController? = null
+    modifier: Modifier = Modifier, draftController: com.example.ui.LocalDraftController? = null,
+    loadDisplayText: (suspend (String) -> String)? = null
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var showNewChatDialog by remember { mutableStateOf(false) }
@@ -161,7 +162,7 @@ fun ChatListScreen(
                             // Empty is absence, not ciphertext; nonempty input still
                             // takes the normal authenticated, fail-closed decoder.
                             decryptedPreview = if (session.lastMessagePreviewEncrypted.isEmpty()) ""
-                                else decryptText(session.lastMessagePreviewEncrypted),
+                                else com.example.ui.components.protectedDisplayText(session.lastMessagePreviewEncrypted, decryptText, loadDisplayText),
                             onClick = { onSessionClick(session.id) },
                             onDelete = { onDeleteSession(session.id) }
                         )

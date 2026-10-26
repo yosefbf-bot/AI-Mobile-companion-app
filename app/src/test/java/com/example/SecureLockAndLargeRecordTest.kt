@@ -45,7 +45,7 @@ class SecureLockAndLargeRecordTest {
             val row = VaultRecords.encode(EncryptedDocument("SYNTHETIC-large", "SYNTHETIC.txt", "CAPTURE_PENDING", cipher.encrypt(plain), "same", plain.length.toLong()), cipher)
             db.documentDao().insertDocument(row)
             assertEquals(row, db.documentDao().getDocumentById(row.id).first())
-            assertEquals(row, db.documentDao().getAllDocuments().first().single())
+            assertEquals(row.copy(encryptedContent = ""), db.documentDao().getAllDocuments().first().single())
             VaultPolicyMigration.convert(db, { cipher.rewrite(it, 10) }, {})
             cipher.active = 10
             val migrated = db.documentDao().allForMigration().single()
@@ -77,5 +77,61 @@ class SecureLockAndLargeRecordTest {
             assertTrue(repository.vaultReady.value)
             assertEquals(1, repository.documents.first().size)
         } finally { release.countDown(); repository.close(); db.close() }
+    }
+
+    @Test fun documentInventoryNeverQueriesBodiesAndOpeningOneHydratesOnlyItsId() = runBlocking {
+        val queries = java.util.Collections.synchronizedList(mutableListOf<Pair<String, List<Any?>>>())
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java)
+            .setQueryCallback({ sql, args -> queries.add(sql to args.toList()) }, java.util.concurrent.Executor { it.run() }).build()
+        val cipher = TestVaultCipher()
+        val repository = PrivateAIRepository(db, cipher = cipher)
+        try {
+            val text = "SYNTHETIC " + "x".repeat(512 * 1024)
+            repeat(6) { index -> db.documentDao().insertDocument(VaultRecords.encode(EncryptedDocument(
+                "synthetic-$index", "Synthetic $index.txt", "TEXT", cipher.encrypt(text), "same", text.length.toLong()), cipher)) }
+            queries.clear()
+            repository.onUnlocked().join()
+            val rows = repository.documents.first()
+            assertEquals(6, rows.size)
+            assertTrue(rows.all { it.encryptedContent.isEmpty() })
+            val inventoryQueries = synchronized(queries) { queries.toList() }
+            assertFalse(inventoryQueries.any { it.first.contains("substr(encryptedContent", true) || it.first.contains("length(encryptedContent)", true) })
+            val opened = repository.openDocument("synthetic-2")!!
+            assertEquals(text, opened.second)
+            val bodyReads = synchronized(queries) { queries.toList() }.filter { it.first.contains("substr(encryptedContent", true) }
+            assertTrue(bodyReads.isNotEmpty())
+            assertTrue(bodyReads.all { it.second.last() == "synthetic-2" })
+        } finally { repository.close(); db.close() }
+    }
+
+    @Test fun payloadPreparationDecodingAndConfigWritesUseInjectedDispatcherButReceiptUsesCaller() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        val storage = java.util.concurrent.Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "synthetic-storage") }.asCoroutineDispatcher()
+        val actual = TestVaultCipher()
+        val cipher = object : VaultCipher {
+            private fun checkThread() { assertTrue(Thread.currentThread().name.startsWith("synthetic-storage")) }
+            override fun encrypt(plaintext: String): String { checkThread(); return actual.encrypt(plaintext) }
+            override fun decrypt(encryptedPayload: String): String { checkThread(); return actual.decrypt(encryptedPayload) }
+        }
+        val store = SecureConfigStore(context, cipher)
+        // SecureConfigStore may contain another synthetic test's protected file; use a clean fixture.
+        store.clear()
+        val repository = PrivateAIRepository(db, configStore = store, cipher = cipher, dispatcher = storage)
+        val caller = Thread.currentThread()
+        try {
+            repository.onUnlocked().join()
+            repository.updateConfigAndWait(com.example.data.model.DesktopNodeConfig(batteryMode = com.example.data.model.BatteryOptimizationMode.MANUAL_ONLY))
+            repository.saveDocument("Synthetic", "TEXT", "SYNTHETIC body", "")
+            val doc = repository.documents.first().single()
+            assertEquals("SYNTHETIC body", repository.openDocument(doc.id)!!.second)
+            assertEquals("SYNTHETIC body", repository.decryptDisplayText(repository.getDocumentById(doc.id).first()!!.encryptedContent))
+            val session = repository.createNewSession("Synthetic")
+            var saved = false
+            repository.sendMessage(session, "SYNTHETIC queued") {
+                assertSame(caller, Thread.currentThread()); saved = true
+            }
+            assertTrue(saved)
+        } finally { repository.close(); storage.close(); db.close(); store.clear() }
     }
 }

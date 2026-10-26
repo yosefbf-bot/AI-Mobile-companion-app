@@ -140,7 +140,7 @@ fun TasksScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
+            if (connectionStatus == ConnectionStatus.DEMO) FloatingActionButton(
                 onClick = { showLauncherSheet = true },
                 containerColor = CyberTeal,
                 contentColor = MaterialTheme.colorScheme.surface,
@@ -211,7 +211,7 @@ fun TasksScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Refresh to check permitted report-job metadata. Run agents and playbooks on the PC; the '+' launcher provides isolated examples only in Demo.",
+                            text = "Refresh to check permitted report-job metadata. Run agents and playbooks on the PC. Demo has isolated examples.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -230,7 +230,8 @@ fun TasksScreen(
                             onRetry = { onRetryTask(task.id) },
                             onApprove = { onSubmitApproval(task.id, true) },
                             onReject = { onSubmitApproval(task.id, false) },
-                            onOpenDetails = { selectedTaskForDetails = task }
+                            onOpenDetails = { selectedTaskForDetails = task },
+                            allowControls = connectionStatus == ConnectionStatus.DEMO
                         )
                     }
                 }
@@ -239,7 +240,7 @@ fun TasksScreen(
     }
 
     // Agent / Playbook Launcher Bottom Sheet
-    if (showLauncherSheet) {
+    if (showLauncherSheet && connectionStatus == ConnectionStatus.DEMO) {
         ModalBottomSheet(
             onDismissRequest = { showLauncherSheet = false },
             sheetState = rememberModalBottomSheetState(),
@@ -255,7 +256,7 @@ fun TasksScreen(
                     style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                 )
                 Text(
-                    text = "Commands are sent remotely to Windows Private AI runtime. All heavy processing runs on desktop workstation.",
+                    text = "Isolated Demo examples only. No command is sent and no desktop task is executed.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -369,7 +370,8 @@ fun TaskCard(
     onRetry: () -> Unit,
     onApprove: () -> Unit,
     onReject: () -> Unit,
-    onOpenDetails: () -> Unit
+    onOpenDetails: () -> Unit,
+    allowControls: Boolean = false
 ) {
     val statusColor = getTaskStatusColor(task.status)
 
@@ -454,7 +456,7 @@ fun TaskCard(
             }
 
             // Approval Prompt
-            if (task.requiresApproval || task.status == "NEEDS_APPROVAL") {
+            if (allowControls && (task.requiresApproval || task.status == "NEEDS_APPROVAL")) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -499,7 +501,7 @@ fun TaskCard(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (task.status == "RUNNING") {
+                if (allowControls && task.status == "RUNNING") {
                     OutlinedButton(
                         onClick = onCancel,
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -509,7 +511,7 @@ fun TaskCard(
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Cancel", style = MaterialTheme.typography.labelSmall)
                     }
-                } else if (task.status == "FAILED") {
+                } else if (allowControls && task.status == "FAILED") {
                     Button(
                         onClick = onRetry,
                         colors = ButtonDefaults.buttonColors(containerColor = CyberTeal),

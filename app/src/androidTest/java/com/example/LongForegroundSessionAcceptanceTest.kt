@@ -188,7 +188,10 @@ class LongForegroundSessionAcceptanceTest {
             assertKey("private_ai_vault_v2", 300)
             phase = "original five-minute synthetic draft and saved/pending five-MiB evidence"
             previousDraft = runBlocking { model.repository.loadLocalDraft("capture").form }
-            val bytes = ByteArray(5 * 1024 * 1024) { (it % 97 + 32).toByte() }
+            // Printable ASCII (32..126) is valid UTF-8. The previous modulus97
+            // inserted standalone0x80 bytes, so the shared validator correctly
+            // rejected this supposed text fixture before storage acceptance.
+            val bytes = ByteArray(5 * 1024 * 1024) { (it % 95 + 32).toByte() }
             val evidence = ChatAttachment("synthetic-five-mib.txt", "DOCUMENT", Base64.encodeToString(bytes, Base64.NO_WRAP), bytes.size.toLong())
             evidenceHash = EncryptionManager.computeSha256(evidence.base64Data)
             captureId = runBlocking { model.repository.createCapture("Synthetic saved pending evidence", attachment = evidence) }

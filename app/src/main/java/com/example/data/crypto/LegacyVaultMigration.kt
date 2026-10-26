@@ -54,14 +54,15 @@ object LegacyVaultMigration {
             if (value.startsWith("ENC:")) plaintext++
             return cipher.encrypt(decodeRetired(value))
         }
-        database.chatDao().allSessionsForMigration().filter { it.storageVersion == 0 }.forEach { row ->
+        database.chatDao().legacySessions().forEach { row ->
             database.chatDao().insertSession(VaultRecords.encode(row.copy(
                 title = "${label(row.id)}: ${row.title}",
                 modelUsed = "Legacy unverified: ${row.modelUsed}", isSynced = false,
                 lastMessagePreviewEncrypted = body(row.lastMessagePreviewEncrypted)), cipher))
             migrated++
         }
-        database.chatDao().allMessagesForMigration().filter { it.storageVersion == 0 }.forEach { row ->
+        database.chatDao().legacyMessageIds().forEach { id ->
+            val row = database.chatDao().messageById(id) ?: error("Legacy message changed during migration.")
             database.chatDao().insertMessage(VaultRecords.encode(row.copy(
                 encryptedContent = body(row.encryptedContent),
                 attachmentDataEncrypted = row.attachmentDataEncrypted?.let(::body),
@@ -73,20 +74,21 @@ object LegacyVaultMigration {
             ), cipher))
             migrated++
         }
-        database.documentDao().allForMigration().filter { it.storageVersion == 0 }.forEach { row ->
+        database.documentDao().legacyIds().forEach { id ->
+            val row = database.documentDao().hydratedById(id) ?: error("Legacy document changed during migration.")
             database.documentDao().insertDocument(VaultRecords.encode(row.copy(
                 fileName = "${label(row.id)}: ${row.fileName}", syncedWithDesktop = false,
                 encryptedContent = body(row.encryptedContent)), cipher))
             migrated++
         }
-        database.taskDao().allTasksForMigration().filter { it.storageVersion == 0 }.forEach { row ->
+        database.taskDao().legacyTasks().forEach { row ->
             database.taskDao().insertTask(VaultRecords.encode(row.copy(
                 title = "${label(row.id)}: ${row.title}", status = "REVIEW_REQUIRED", category = "LEGACY_UNVERIFIED",
                 requiresApproval = false,
                 resultSummary = "${label(row.id)}. Original status: ${row.status}; category: ${row.category}; requiresApproval: ${row.requiresApproval}.\n${row.resultSummary.orEmpty()}"
             ), cipher)); migrated++
         }
-        database.taskDao().allNotificationsForMigration().filter { it.storageVersion == 0 }.forEach { row ->
+        database.taskDao().legacyNotifications().forEach { row ->
             database.taskDao().insertNotification(VaultRecords.encode(row.copy(
                 title = "${label(row.id)}: ${row.title}", severity = "INFO", category = "LEGACY_UNVERIFIED",
                 requiresApproval = false,

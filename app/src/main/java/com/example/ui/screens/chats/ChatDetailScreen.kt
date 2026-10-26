@@ -122,7 +122,8 @@ fun ChatDetailScreen(
     lastConnectionCheck: Long = 0,
     isSyncing: Boolean = false,
     onCheckConnection: () -> Unit = {},
-    onAskAgain: (EncryptedChatMessage) -> Unit = {}
+    onAskAgain: (EncryptedChatMessage) -> Unit = {},
+    loadDisplayText: (suspend (String) -> String)? = null
 ) {
     BackHandler {
         onBackClick()
@@ -501,7 +502,7 @@ fun ChatDetailScreen(
         ) {
             items(messages, key = { it.id }) { msg ->
                 val isUser = msg.sender == "user"
-                val decryptedText = decryptText(msg.encryptedContent)
+                val decryptedText = com.example.ui.components.protectedDisplayText(msg.encryptedContent, decryptText, loadDisplayText)
                 // Locally acknowledged reply IDs retain an exact original request/policy link.
                 // Imported history lacks that policy provenance, so it does not offer this action.
                 val originalQuestion = if (msg.sender == "assistant" && msg.status == "SYNCED_DESKTOP" && msg.id.startsWith("reply-"))

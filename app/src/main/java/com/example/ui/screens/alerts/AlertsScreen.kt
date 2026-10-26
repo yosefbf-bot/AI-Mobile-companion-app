@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.entity.DesktopNotification
 import com.example.data.model.ConnectionStatus
+import com.example.data.model.AlertCoverage
 import com.example.ui.components.ConnectionStatusBadge
 import com.example.ui.theme.CyberCyan
 import com.example.ui.theme.CyberTeal
@@ -83,21 +84,22 @@ fun AlertsScreen(
     onApproveAction: (String, Boolean) -> Unit,
     onRunAnalysis: (String) -> Unit,
     onMarkAllRead: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    coverage: AlertCoverage = AlertCoverage()
 ) {
     var selectedFilter by remember { mutableStateOf("ALL") } // "ALL", "UNRESOLVED", "CRITICAL", "APPROVALS"
     var selectedAlertForDetails by remember { mutableStateOf<DesktopNotification?>(null) }
 
     val filteredAlerts = remember(alerts, selectedFilter) {
         when (selectedFilter) {
-            "UNRESOLVED" -> alerts.filter { !it.isAcknowledged }
+            "UNRESOLVED" -> alerts.filter { !it.isRead }
             "CRITICAL" -> alerts.filter { it.severity == "CRITICAL" || it.severity == "HIGH" }
             "APPROVALS" -> alerts.filter { it.requiresApproval }
             else -> alerts
         }
     }
 
-    val unacknowledgedCount = alerts.count { !it.isAcknowledged }
+    val unacknowledgedCount = alerts.count { !it.isRead }
 
     Scaffold(
         modifier = modifier.fillMaxSize().testTag("alerts_screen"),
@@ -110,7 +112,7 @@ fun AlertsScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = if (unacknowledgedCount > 0) "$unacknowledgedCount unresolved items require review" else "All alerts acknowledged",
+                            text = "$unacknowledgedCount unread on this phone; clinical status is on the PC",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = if (unacknowledgedCount > 0) StatusRed else CyberTeal,
                                 fontWeight = FontWeight.SemiBold
@@ -148,6 +150,9 @@ fun AlertsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            Text(alertCoverageText(coverage, connectionStatus),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("alert_coverage"))
             // Filter chips
             Row(
                 modifier = Modifier
@@ -164,7 +169,7 @@ fun AlertsScreen(
                 FilterChip(
                     selected = selectedFilter == "UNRESOLVED",
                     onClick = { selectedFilter = "UNRESOLVED" },
-                    label = { Text("Unresolved ($unacknowledgedCount)") },
+                    label = { Text("Unread ($unacknowledgedCount)") },
                     colors = FilterChipDefaults.filterChipColors(selectedContainerColor = StatusRed.copy(alpha = 0.2f))
                 )
                 FilterChip(
@@ -197,9 +202,9 @@ fun AlertsScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Clear",
-                                tint = CyberTeal,
+                                imageVector = Icons.Default.Info,
+                                contentDescription = "No cached matches",
+                                tint = StatusAmber,
                                 modifier = Modifier.size(36.dp)
                             )
                         }
@@ -209,7 +214,7 @@ fun AlertsScreen(
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Surveillance and clinical agent pipelines running normally on Windows host.",
+                            text = "No cached alerts match this filter. This does not establish monitoring coverage or clinical safety. Review the PC.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -228,7 +233,8 @@ fun AlertsScreen(
                             onOpenDetails = { selectedAlertForDetails = alert },
                             onApprove = { onApproveAction(alert.id, true) },
                             onReject = { onApproveAction(alert.id, false) },
-                            onRunAnalysis = { onRunAnalysis(alert.relatedAction ?: alert.title) }
+                            onRunAnalysis = { onRunAnalysis(alert.relatedAction ?: alert.title) },
+                            allowControls = connectionStatus == ConnectionStatus.DEMO
                         )
                     }
                 }
@@ -321,7 +327,7 @@ fun AlertsScreen(
                 }
             },
             confirmButton = {
-                if (!alert.isAcknowledged) {
+                if (!alert.isRead) {
                     Button(
                         onClick = {
                             onAcknowledgeAlert(alert.id)
@@ -329,7 +335,7 @@ fun AlertsScreen(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CyberTeal)
                     ) {
-                        Text("Acknowledge")
+                        Text("Mark read on this phone")
                     }
                 }
             },
@@ -349,7 +355,8 @@ fun AlertCard(
     onOpenDetails: () -> Unit,
     onApprove: () -> Unit,
     onReject: () -> Unit,
-    onRunAnalysis: () -> Unit
+    onRunAnalysis: () -> Unit,
+    allowControls: Boolean = false
 ) {
     val severityColor = getSeverityColor(alert.severity)
 
@@ -362,8 +369,8 @@ fun AlertCard(
             containerColor = MaterialTheme.colorScheme.surface
         ),
         border = androidx.compose.foundation.BorderStroke(
-            width = if (!alert.isAcknowledged) 1.5.dp else 1.dp,
-            color = if (!alert.isAcknowledged) severityColor.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+            width = if (!alert.isRead) 1.5.dp else 1.dp,
+            color = if (!alert.isRead) severityColor.copy(alpha = 0.6f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
         )
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
@@ -395,17 +402,17 @@ fun AlertCard(
                     )
                 }
 
-                if (alert.isAcknowledged) {
+                if (alert.isRead) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.Check,
-                            contentDescription = "Acknowledged",
+                            contentDescription = "Read on this phone",
                             tint = CyberTeal,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Acknowledged",
+                            text = "Read on this phone",
                             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, color = CyberTeal)
                         )
                     }
@@ -416,7 +423,7 @@ fun AlertCard(
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "ACTION REQUIRED",
+                            text = "UNREAD ON PHONE",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
@@ -465,7 +472,7 @@ fun AlertCard(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (alert.requiresApproval) {
+                    if (allowControls && alert.requiresApproval) {
                         Button(
                             onClick = onApprove,
                             colors = ButtonDefaults.buttonColors(containerColor = CyberTeal),
@@ -485,18 +492,18 @@ fun AlertCard(
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Reject", style = MaterialTheme.typography.labelSmall)
                         }
-                    } else if (!alert.isAcknowledged) {
+                    } else if (!alert.isRead) {
                         Button(
                             onClick = onAcknowledge,
                             colors = ButtonDefaults.buttonColors(containerColor = CyberTeal),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.Check, contentDescription = "Acknowledge", modifier = Modifier.size(14.dp))
+                            Icon(imageVector = Icons.Default.Check, contentDescription = "Mark read on this phone", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Acknowledge", style = MaterialTheme.typography.labelSmall)
+                            Text("Mark read locally", style = MaterialTheme.typography.labelSmall)
                         }
-                    } else if (alert.relatedAction != null) {
+                    } else if (allowControls && alert.relatedAction != null) {
                         OutlinedButton(
                             onClick = onRunAnalysis,
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
@@ -511,6 +518,25 @@ fun AlertCard(
             }
         }
     }
+}
+
+fun alertCoverageText(coverage: AlertCoverage, connection: ConnectionStatus): String {
+    val status = when {
+        connection == ConnectionStatus.DEMO -> "Demo examples; no real monitoring coverage."
+        connection != ConnectionStatus.CONNECTED -> "Monitoring coverage unavailable while disconnected or checking; cached alerts may be incomplete."
+        coverage.scopeGranted == false -> "Clinical alert access is not granted to this phone. Enable it on the PC."
+        coverage.monitoringEnabled == false -> "Desktop monitoring is disabled."
+        coverage.isSurveillanceComplete == false -> "Desktop monitoring coverage is incomplete."
+        coverage.scopeGranted != true || coverage.monitoringEnabled == null || coverage.isSurveillanceComplete == null -> "Desktop monitoring coverage is unknown."
+        else -> "The desktop reports monitoring enabled and coverage complete; review its evidence."
+    }
+    val total = coverage.total?.toString() ?: "unknown"
+    val extent = when (coverage.truncated) {
+        true -> "Only a limited set of desktop alerts is shown."
+        false -> "The desktop did not truncate this response."
+        null -> "Response completeness is unknown."
+    }
+    return "$status Desktop total: $total. $extent Empty or filtered lists are not an all-clear. Reading here does not resolve a clinical alert."
 }
 
 fun getSeverityColor(severity: String): Color {

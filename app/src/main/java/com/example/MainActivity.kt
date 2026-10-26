@@ -157,7 +157,7 @@ class MainActivity : FragmentActivity() {
         else cameraPermission.launch(Manifest.permission.CAMERA)
     }
     private fun requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33 &&
+        if (!notificationRequestInProgress && Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             notificationRequestInProgress = true
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -389,6 +389,7 @@ class MainActivity : FragmentActivity() {
                 val documents by viewModel.documents.collectAsStateWithLifecycle()
                 val tasks by viewModel.tasks.collectAsStateWithLifecycle()
                 val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+                val alertCoverage by viewModel.alertCoverage.collectAsStateWithLifecycle()
                 val feedbackMessage by viewModel.userFeedback.collectAsStateWithLifecycle()
                 val secureClinicalMode by viewModel.secureClinicalMode.collectAsStateWithLifecycle()
                 val sessionMinutes by EncryptionManager.committedSessionMinutes.collectAsStateWithLifecycle()
@@ -420,7 +421,7 @@ class MainActivity : FragmentActivity() {
                                         ?: received.bitmap?.let { AttachmentUtils.bitmapToChatAttachment(it) }
                                 }
                                 if (attachment == null) {
-                                    evidenceError = "This evidence could not be read or exceeds the 5 MiB limit."
+                                    evidenceError = "This evidence could not be read, is unsupported or exceeds 5 MiB. " + com.example.data.crypto.EvidenceValidator.SUPPORTED_FORMATS
                                     processed = true
                                 }
                                 else if (received.target.fingerprint != PairingConfigParser.destinationIdentity(viewModel.nodeConfig.value) ||
@@ -506,6 +507,7 @@ class MainActivity : FragmentActivity() {
                             onAskAgain = { viewModel.askAgain(it.id) },
                             onModelModeChange = { viewModel.setModelProcessingMode(it) },
                             decryptText = { viewModel.decrypt(it) },
+                            loadDisplayText = viewModel::loadDisplayText,
                             decryptAttachmentBitmap = { viewModel.decryptAttachmentBitmap(it) },
                             onSendMessage = { prompt, attachment -> viewModel.sendMessage(prompt, attachment) },
                             onStopStreaming = { viewModel.stopStreaming() },
@@ -644,6 +646,7 @@ class MainActivity : FragmentActivity() {
                                         draftController = viewModel.draftController,
                                         sessions = chatSessions,
                                         decryptText = { viewModel.decrypt(it) },
+                                        loadDisplayText = viewModel::loadDisplayText,
                                         onSessionClick = { viewModel.selectSession(it) },
                                         onCreateNewSession = { viewModel.createNewChat(it) },
                                         onDeleteSession = { viewModel.deleteSession(it) }
@@ -663,6 +666,7 @@ class MainActivity : FragmentActivity() {
 
                                     ScreenTab.ALERTS -> AlertsScreen(
                                         alerts = notifications,
+                                        coverage = alertCoverage,
                                         connectionStatus = connectionStatus,
                                         hostIp = "${nodeConfig.hostIp}:${nodeConfig.port}",
                                         onAcknowledgeAlert = { viewModel.acknowledgeAlert(it) },
@@ -673,6 +677,7 @@ class MainActivity : FragmentActivity() {
 
                                     ScreenTab.FILES -> LocalDraftForm(viewModel.draftController, "vault") { draft -> DocumentVaultScreen(
                                         documents = documents,
+                                        loadDocument = viewModel.repository::openDocument,
                                         lastSavedCaptureId = lastSavedCaptureId,
                                         decryptText = { viewModel.decrypt(it) },
                                         documentSaved = documentSaved,
@@ -704,12 +709,11 @@ class MainActivity : FragmentActivity() {
                                         screenLockState = screenLockState, sessionPolicyError = sessionChangeError ?: sessionPolicyError,
                                         autoSaveDrafts = autoSaveDrafts, onAutoSaveDraftsChange = viewModel.draftController::setAutoSave,
                                         onSaveConfig = {
-                                            viewModel.updateNodeConfig(it)
-                                            if (it.backgroundNotificationsEnabled) requestNotificationPermission()
+                                            val requestPermission = it.backgroundNotificationsEnabled && !nodeConfig.backgroundNotificationsEnabled
+                                            viewModel.updateNodeConfig(it) { if (requestPermission) requestNotificationPermission() }
                                         },
                                         onToggleSecureClinicalMode = { viewModel.setSecureClinicalMode(it) },
                                         onTestConnection = { viewModel.triggerSync() },
-                                        onRequestNotificationPermission = { requestNotificationPermission() },
                                         onLockVault = { lockProtectedWorkspace() },
                                         pairingState = pairingState, onPairLink = viewModel::beginPairing,
                                         onCancelPairing = viewModel::cancelPairing,
