@@ -13,6 +13,18 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class EvidenceValidatorTest {
+    @Test fun maximumSizedDeviceTextFixtureRemainsValidAndMalformedUtf8IsStillRejected() {
+        val bytes = ByteArray(5 * 1024 * 1024) { (it % 95 + 32).toByte() }
+        val validated = EvidenceValidator.validateBytes(bytes, "synthetic-five-mib.txt", "DOCUMENT", "text/plain")
+        assertEquals("text/plain", validated.mime)
+        assertEquals(5 * 1024 * 1024, validated.bytes.size)
+        assertArrayEquals(bytes, validated.bytes)
+        bytes[96] = 0x80.toByte()
+        assertThrows(EvidenceValidationException::class.java) {
+            EvidenceValidator.validateBytes(bytes, "synthetic-five-mib.txt", "DOCUMENT", "text/plain")
+        }
+    }
+
     @Test fun importAndEnqueueUseTheSameJpegPngPdfAndTxtChecks() {
         val cases = listOf(
             Triple("synthetic.jpg", "image/jpeg", byteArrayOf(-1, -40, -1, -32)),
