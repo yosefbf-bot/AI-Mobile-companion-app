@@ -20,6 +20,34 @@ import java.util.concurrent.atomic.AtomicBoolean
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class LocalDraftStoreTest {
+    @Test fun lockEvictsOnlyDurableDraftsAndTheirEvidenceAndReloadsExactBytes() = runBlocking {
+        val db = database(); val cipher = PolicyTestCipher(); val drafts = store(db, cipher)
+        try {
+            val evidence = com.example.data.model.ChatAttachment("SYNTHETIC.txt", "DOCUMENT", "A".repeat(1024 * 1024), 786432L)
+            drafts.updateFields(drafts.load("saved").token, "{\"text\":\"SYNTHETIC saved\"}", evidence, true)
+            drafts.flush()
+            val before = drafts.retainedBytes()
+            assertTrue(before > 1024 * 1024)
+            val off = drafts.updateFields(drafts.load("off").token, "{\"text\":\"SYNTHETIC unsaved\"}", null, false)
+            drafts.onLocked()
+            assertTrue(drafts.retainedBytes() in 1 until before)
+            assertEquals("SYNTHETIC unsaved", JSONObject(drafts.current(off).form).getString("text"))
+            val restored = JSONObject(drafts.load("saved").form)
+            assertEquals("SYNTHETIC saved", restored.getString("text"))
+            assertEquals(evidence.base64Data, restored.getJSONObject("evidence").getString("data"))
+            drafts.onLocked()
+            assertEquals(1L, db.localDraftDao().count())
+        } finally { drafts.close(); db.close() }
+    }
+    @Test fun writeFinishingWhileLockedCanBeEvictedOnlyAfterItsDurableCommit() = runBlocking {
+        val db = database(); val cipher = PolicyTestCipher(); val drafts = store(db, cipher)
+        try {
+            drafts.updateFields(drafts.load("pending").token, "{\"text\":\"SYNTHETIC pending\"}", null, true)
+            drafts.onLocked(); assertTrue(drafts.retainedBytes() > 0)
+            drafts.flush(); assertEquals(0L, drafts.retainedBytes())
+            assertEquals("SYNTHETIC pending", JSONObject(drafts.load("pending").form).getString("text"))
+        } finally { drafts.close(); db.close() }
+    }
     private fun database(callback: androidx.room.RoomDatabase.QueryCallback? = null): AppDatabase {
         val builder = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java)
         if (callback != null) builder.setQueryCallback(callback, java.util.concurrent.Executor { it.run() })

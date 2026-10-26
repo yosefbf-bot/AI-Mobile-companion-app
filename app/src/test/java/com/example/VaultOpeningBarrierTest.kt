@@ -21,6 +21,29 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class VaultOpeningBarrierTest {
+    @Test fun lockedCollectorsReadNoRecordTablesAndReloadAfterUnlock() = runBlocking {
+        val queries = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java)
+            .setQueryCallback({ sql, _ -> queries.add(sql) }, java.util.concurrent.Executor { it.run() }).build()
+        val repository = PrivateAIRepository(db, cipher = TestVaultCipher())
+        try {
+            withTimeout(10_000) {
+                assertTrue(repository.chatSessions.first().isEmpty())
+                assertTrue(repository.documents.first().isEmpty())
+                assertTrue(repository.tasks.first().isEmpty())
+                assertTrue(repository.notifications.first().isEmpty())
+                assertTrue(repository.getMessagesForSession("synthetic").first().isEmpty())
+                assertNull(repository.getSessionById("synthetic").first())
+                assertNull(repository.getDocumentById("synthetic").first())
+            }
+            assertTrue(synchronized(queries) { queries.none { it.trimStart().startsWith("SELECT", true) } })
+            withTimeout(10_000) { repository.onUnlocked().join(); assertTrue(repository.documents.first().isEmpty()) }
+            assertTrue(repository.vaultReady.value)
+            repository.onLocked(); queries.clear()
+            withTimeout(10_000) { assertTrue(repository.documents.first().isEmpty()) }
+            assertTrue(synchronized(queries) { queries.none { it.contains("FROM documents", true) } })
+        } finally { repository.close(); db.close() }
+    }
     @Test fun eachOpeningMigratesRealDatabaseOnceAndNeverHydratesCurrentBodies() = runBlocking {
         val queries = java.util.Collections.synchronizedList(mutableListOf<String>())
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java)
