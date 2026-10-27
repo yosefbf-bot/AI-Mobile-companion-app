@@ -1,3 +1,34 @@
+# Durable chat receipts and dependency cleanup - October 26, 2026
+
+Base main ed388c0e1f03f78a2f8eaaf1fff46f9b76bd80f8; branch
+chatgpt/companion-receipts-20261026, unchanged 1.2.7-dev/code10 and Room schema5.
+Acknowledged requests now retain a separate encrypted CHAT_RECEIPT in the existing
+policy-migrated operation store. Receipt and answer acknowledgement are atomic;
+history import is serialized against delivery. Explicit optional desktop message
+IDs correlate same-session/same-pairing history; repeated text never supplies
+identity or privacy. Ask again uses the full original prompt and original minimum
+privacy, upgraded by stricter current settings. Session deletion deletes receipts.
+Older desktops still work without IDs; historical missing links are not invented.
+
+Removed confirmed unused Firebase AI/AppCheck, Coil, Retrofit/Moshi/codegen and
+HTTP logging dependencies plus unused Google Services/Secrets plugins. Kept OkHttp,
+Room/KSP, OS authentication, signer/application ID, encryption and all runtime gates.
+Main-run40271727364 debug APK baseline: 30,107,287 bytes (artifact12628329333).
+Candidate APK size and exact-head hosted acceptance remain pending. First run
+40444395214 compiled and passed Windows HTTPS interop, but JUnit rejected the new
+database-reopen test because its final deleteDatabase expression returned Boolean
+instead of Unit. The cleanup now asserts successful deletion and returns Unit;
+all behavior assertions are retained. This correction requires a new exact-head run.
+
+New tests cover send/sync, actual database close/reopen, minimum original privacy,
+independent receipt retention, deletion, same-text non-linkage, old desktops and
+changed pairing rejection. Local Gradle attempt stops before compilation with
+java.io.IOException: Unable to establish loopback connection; no local Android
+test pass is claimed. CI policy tests42/42; independent read-only review found no
+confirmed issue. Required build/unit/lint/emulator/Windows interop must pass before
+merge. Owner phone checklist is docs/PHONE_ACCEPTANCE_CHECKLIST_2026-10-26.md;
+physical-phone acceptance remains unperformed. No installed app/data was replaced.
+
 # Device evidence fixture repair - October 25, 2026
 
 Run40248934100 at3ec416c passed unit/lint/build and Windows HTTPS interop, then

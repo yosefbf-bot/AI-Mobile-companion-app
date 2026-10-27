@@ -86,6 +86,8 @@ class GatewayRepositoryTest {
     @Volatile private var permanentlyFailedMeeting: String? = null
     @Volatile private var permanentMeetingCode = "NOT_FOUND"
     @Volatile private var conversationRows = org.json.JSONArray()
+    @Volatile private var receiptHistory: org.json.JSONArray? = null
+    @Volatile private var includeReceiptIds = true
     @Volatile private var alertResponse = JSONObject().put("alerts", org.json.JSONArray())
     @Volatile private var wrongChatAcknowledgment = false
     @Volatile private var loseChatAcknowledgment = false
@@ -137,6 +139,7 @@ class GatewayRepositoryTest {
                     else if (!allowChat) { code = 503; JSONObject().put("error",JSONObject().put("code","LOCAL_UNAVAILABLE")) }
                     else JSONObject().put("reply","SYNTHETIC real HTTP reply").put("sessionId",input.getString("sessionId"))
                         .put("requestId",if (wrongChatAcknowledgment) "wrong-request" else input.getString("requestId")).put("processing",JSONObject().put("provider","local").put("model","SYNTHETIC test engine"))
+                        .apply { if (includeReceiptIds) { put("userMessageId", "user-${input.getString("requestId")}"); put("assistantMessageId", "answer-${input.getString("requestId")}") } }
                 }
                 GatewayEndpoints.TASKS -> JSONObject().put("tasks",org.json.JSONArray())
                 GatewayEndpoints.ALERTS -> alertResponse
@@ -156,7 +159,7 @@ class GatewayRepositoryTest {
                         .first { it.getString("sessionId") == input.getString("sessionId") }
                     if (historyFailureCode != null) { code = 503; JSONObject().put("error", JSONObject().put("code", historyFailureCode)) }
                     else JSONObject().put("sessionId", row.getString("sessionId")).put("title", row.getString("title"))
-                        .put("updated", row.getLong("updated")).put("messages", org.json.JSONArray().put(JSONObject()
+                        .put("updated", row.getLong("updated")).put("messages", receiptHistory ?: org.json.JSONArray().put(JSONObject()
                             .put("id", "message").put("role", "assistant").put("text", "SYNTHETIC history").put("created", 1)))
                 }
                 "/mobile/api/v1/meetings" -> JSONObject().put("meetings", org.json.JSONArray())
@@ -672,6 +675,77 @@ class GatewayRepositoryTest {
         }
         assertEquals(0, chatRequests.get())
         assertEquals(1, repository.getMessagesForSession(session).first().size)
+    }
+
+    @Test fun completedReceiptSurvivesHistoryReplacementAndRepositoryReopenWithOriginalPrivacy() = runBlocking {
+        repository.close(); database.close()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val databaseName = "synthetic-receipts-${java.util.UUID.randomUUID()}.db"
+        database = Room.databaseBuilder(context, AppDatabase::class.java, databaseName).allowMainThreadQueries().build()
+        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase, cipher = cipher)
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC durable provenance")
+        val first = repository.sendMessage(session, "SYNTHETIC original question")
+        conversationRows.put(JSONObject().put("sessionId", session).put("title", "SYNTHETIC desktop").put("updated", 100))
+        receiptHistory = org.json.JSONArray()
+            .put(JSONObject().put("id", "user-${first.id}").put("role", "user").put("text", "SYNTHETIC original question").put("created", 1))
+            .put(JSONObject().put("id", "answer-${first.id}").put("role", "assistant").put("text", "SYNTHETIC answer").put("created", 2))
+            // Same text without the receipt ID must not acquire permission or provenance.
+            .put(JSONObject().put("id", "unrelated").put("role", "user").put("text", "SYNTHETIC original question").put("created", 3))
+        assertTrue(repository.triggerSync().success)
+        repository.close()
+        database.close()
+        database = Room.databaseBuilder(context, AppDatabase::class.java, databaseName).allowMainThreadQueries().build()
+        repository = PrivateAIRepository(database, configStore = configuration, demoDatabase = demoDatabase, cipher = cipher)
+        repository.onUnlocked().join()
+        repository.setSecureClinicalMode(false).join()
+        val rows = repository.getMessagesForSession(session).first()
+        val original = rows.single { it.id == first.id }
+        assertEquals("user-${first.id}", original.desktopMessageId)
+        assertTrue(original.requireLocal && original.requireHipaa)
+        assertEquals("answer-${first.id}", rows.single { it.id == "reply-${first.id}" }.desktopMessageId)
+        assertNull(rows.single { it.desktopMessageId == "unrelated" }.desktopFingerprint)
+        assertEquals(3, rows.size)
+        assertFalse(database.pendingOperationDao().chatReceipt(first.id)!!.encryptedPayload.contains("SYNTHETIC original question"))
+        val again = repository.askAgain(session, first.id)
+        assertNotEquals(first.id, again.id)
+        assertEquals("SYNTHETIC original question", requests.last().getString("prompt"))
+        assertTrue(requests.last().getBoolean("requireLocal") && requests.last().getBoolean("requireHipaa"))
+        // The receipt is durable independently of the replaceable history cache.
+        database.chatDao().deleteAcknowledgedHistory(session)
+        repository.askAgain(session, first.id)
+        assertEquals(3, requests.size)
+        repository.deleteSession(session)
+        try { repository.askAgain(session, first.id); fail("Deleting a phone conversation must delete its receipts.") }
+        catch (_: GatewayException) {}
+        assertEquals(3, requests.size)
+        database.close()
+        assertTrue(context.deleteDatabase(databaseName))
+    }
+
+    @Test fun oldDesktopWithoutMessageIdsRemainsCompatibleAndDoesNotMatchHistoryByText() = runBlocking {
+        includeReceiptIds = false
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC old desktop")
+        val first = repository.sendMessage(session, "SYNTHETIC question")
+        conversationRows.put(JSONObject().put("sessionId", session).put("title", "SYNTHETIC old desktop").put("updated", 100))
+        receiptHistory = org.json.JSONArray().put(JSONObject().put("id", "unknown-id").put("role", "user").put("text", "SYNTHETIC question").put("created", 1))
+        assertTrue(repository.triggerSync().success)
+        assertNull(repository.getMessagesForSession(session).first().single().desktopFingerprint)
+        repository.askAgain(session, first.id)
+        assertEquals(2, requests.size)
+    }
+
+    @Test fun durableReceiptCannotBeRepeatedUnderAnotherPairing() = runBlocking {
+        repository.onUnlocked().join()
+        val session = repository.createNewSession("SYNTHETIC pairing-bound receipt")
+        val first = repository.sendMessage(session, "SYNTHETIC protected question")
+        database.chatDao().deleteAcknowledgedHistory(session)
+        repository.updateConfigAndWait(config.copy(pairKey = "B".repeat(43)))
+        try { repository.askAgain(session, first.id); fail("A new pairing must not reuse a previous pairing's receipt.") }
+        catch (e: GatewayException) { assertEquals("PAIRING_CHANGED", e.code) }
+        assertEquals(1, requests.size)
+        assertNotNull(database.pendingOperationDao().chatReceipt(first.id))
     }
 
     @Test fun failedCaptureRetriesSameSourceAndStillRefreshesOtherDesktopRecords() = runBlocking {

@@ -503,8 +503,8 @@ fun ChatDetailScreen(
             items(messages, key = { it.id }) { msg ->
                 val isUser = msg.sender == "user"
                 val decryptedText = com.example.ui.components.protectedDisplayText(msg.encryptedContent, decryptText, loadDisplayText)
-                // Locally acknowledged reply IDs retain an exact original request/policy link.
-                // Imported history lacks that policy provenance, so it does not offer this action.
+                // Local replies and explicitly receipt-linked desktop history retain the
+                // original request identity. Unrelated imported history has no such link.
                 val originalQuestion = if (msg.sender == "assistant" && msg.status == "SYNCED_DESKTOP" && msg.id.startsWith("reply-"))
                     messages.firstOrNull { it.id == msg.id.removePrefix("reply-") && it.sender == "user" &&
                         it.status == "SYNCED_DESKTOP" && !it.desktopFingerprint.isNullOrBlank() &&
