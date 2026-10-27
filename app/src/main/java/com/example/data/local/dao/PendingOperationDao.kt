@@ -9,6 +9,17 @@ import com.example.data.local.entity.PendingOperation
 @Dao
 interface PendingOperationDao {
 
+    @Query("SELECT * FROM pending_operations WHERE id = 'chat-receipt-' || :messageId AND operation = 'CHAT_RECEIPT' AND status = 'ACKNOWLEDGED'")
+    suspend fun chatReceipt(messageId: String): PendingOperation?
+
+    // Desktop history contains at most 100 messages. Bound hydration independently
+    // of older receipts retained for explicit repeat requests until session deletion.
+    @Query("SELECT * FROM pending_operations WHERE operation = 'CHAT_RECEIPT' AND status = 'ACKNOWLEDGED' AND serverId = :sessionId ORDER BY createdAt DESC, rowid DESC LIMIT 100")
+    suspend fun chatReceipts(sessionId: String): List<PendingOperation>
+
+    @Query("DELETE FROM pending_operations WHERE operation = 'CHAT_RECEIPT' AND serverId = :sessionId")
+    suspend fun deleteChatReceipts(sessionId: String)
+
     @Query("SELECT * FROM pending_operations WHERE (:after IS NULL OR id > :after) ORDER BY id LIMIT :limit")
     suspend fun allAfterForPolicy(after: String?, limit: Int): List<PendingOperation>
     @androidx.room.Update

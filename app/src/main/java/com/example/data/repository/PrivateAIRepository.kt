@@ -8,6 +8,7 @@ import com.example.data.crypto.VaultRecords
 import com.example.data.crypto.EvidenceValidator
 import com.example.data.crypto.EvidenceValidationException
 import com.example.data.local.AppDatabase
+import androidx.room.withTransaction
 import com.example.data.local.entity.*
 import com.example.data.model.*
 import com.example.data.network.*
@@ -638,7 +639,9 @@ class PrivateAIRepository(
         requireReady()
         val config = workspace.config
         val generation = workspace.generation
-        val original = workspace.database.chatDao().messageById(originalMessageId)?.let { VaultRecords.decode(it, cipher) }
+        val receipt = workspace.database.pendingOperationDao().chatReceipt(originalMessageId)
+        val original = receipt?.let { ChatRequestReceipts.original(it, cipher) }
+            ?: workspace.database.chatDao().messageById(originalMessageId)?.let { VaultRecords.decode(it, cipher) }
             ?: throw GatewayException("REVIEW_CHANGED", 409, "The original question is no longer available. Review the conversation before asking again.")
         if (original.sessionId != sessionId || original.sender != "user" || original.status != "SYNCED_DESKTOP" ||
             original.attachmentName != null || original.attachmentDataEncrypted != null) {
@@ -690,6 +693,7 @@ class PrivateAIRepository(
         val current = targetDao.messageById(message.id)?.let { VaultRecords.decode(it, cipher) } ?: return@withLock
         if (current.status != "QUEUED_OFFLINE") return@withLock
         var attempt = current
+        var acknowledged = false
         try {
             val expected = PairingConfigParser.destinationIdentity(destination)
             if (expected.isBlank() || current.desktopFingerprint != expected) throw GatewayException("PAIRING_CHANGED", 403,
@@ -715,7 +719,13 @@ class PrivateAIRepository(
             val result = EncryptedChatMessage("reply-${attempt.id}", attempt.sessionId, "assistant",
                 cipher.encrypt(reply.reply + if (reply.incomplete) "\n\nResponse reached the desktop output limit." else ""),
                 status = "SYNCED_DESKTOP", modelName = reply.model ?: "Not provided")
-            targetDao.acknowledgeMessageWithReply(attempt.id, VaultRecords.encode(result, cipher))
+            val receipt = ChatRequestReceipts.create(attempt, reply, cipher)
+            workspace.database.withTransaction {
+                requireCurrent(workspace)
+                workspace.database.pendingOperationDao().enqueue(receipt)
+                targetDao.acknowledgeMessageWithReply(attempt.id, VaultRecords.encode(result, cipher))
+            }
+            acknowledged = true
             val session = targetDao.sessionById(attempt.sessionId)?.let { VaultRecords.decode(it, cipher) }
             requireCurrent(destination, generation)
             if (session != null) targetDao.insertSession(VaultRecords.encode(session.copy(isSynced = true,
@@ -723,6 +733,10 @@ class PrivateAIRepository(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             requireCurrent(destination, generation)
+            if (acknowledged) {
+                _lastError.value = "Answer saved on this phone; conversation metadata refresh is incomplete. " + safeMessage(e)
+                throw e
+            }
             targetDao.updateMessage(VaultRecords.encode(attempt.copy(status = if (needsReview(e)) "REVIEW_REQUIRED" else "QUEUED_OFFLINE",
                 deliveryError = safeMessage(e)), cipher))
             pendingWake.trySend(Unit)
@@ -749,6 +763,8 @@ class PrivateAIRepository(
             val previous = targetDao.sessionById(id)
             if (revision != null && previous != null && previous.desktopChatId == id && previous.desktopRevision == revision) continue
             if (count >= 20) { historiesPending = true; continue }
+            delivery.withLock {
+            requireCurrent(workspace)
             val history = workflows.history(config, id)
             requireCurrent(config, generation)
             require(history.getString("sessionId") == id) { "Conversation history did not match." }
@@ -759,13 +775,16 @@ class PrivateAIRepository(
             val array = history.getJSONArray("messages")
             val records = (0 until array.length()).map { i ->
                 val m = array.getJSONObject(i)
-                VaultRecords.encode(EncryptedChatMessage(id = "desktop-$id-${m.getString("id")}", sessionId = id, sender = m.getString("role"),
+                EncryptedChatMessage(id = "desktop-$id-${m.getString("id")}", sessionId = id, sender = m.getString("role"),
                     encryptedContent = cipher.encrypt(m.optString("text")), timestamp = m.optLong("created"), status = "SYNCED_DESKTOP",
-                    modelName = m.optJSONObject("processing")?.optString("model") ?: "Not provided", desktopMessageId = m.getString("id")), cipher)
+                    modelName = m.optJSONObject("processing")?.optString("model") ?: "Not provided", desktopMessageId = m.getString("id"))
             }
+            val receipts = workspace.database.pendingOperationDao().chatReceipts(id)
+            val correlated = ChatRequestReceipts.correlate(records, receipts, PairingConfigParser.destinationIdentity(config), cipher)
             requireCurrent(config, generation)
-            targetDao.importHistory(session, records)
+            targetDao.importHistory(session, correlated.map { VaultRecords.encode(it, cipher) })
             count++
+            }
         }
         return count
     }
@@ -908,7 +927,11 @@ class PrivateAIRepository(
     suspend fun deleteDocument(id: String) = withTrackedStorage { it.database.documentDao().deleteDocument(id) }
     suspend fun deleteSession(id: String) = withTrackedStorage { workspace ->
         val targetDao = workspace.database.chatDao()
-        targetDao.deleteMessagesForSession(id); targetDao.deleteSession(id)
+        workspace.database.withTransaction {
+            requireCurrent(workspace)
+            targetDao.deleteMessagesForSession(id); targetDao.deleteSession(id)
+            workspace.database.pendingOperationDao().deleteChatReceipts(id)
+        }
     }
     suspend fun markNotificationRead(id: String) = withTrackedStorage { it.database.taskDao().markNotificationRead(id) }
     suspend fun markAllNotificationsRead() = withTrackedStorage { it.database.taskDao().markAllNotificationsRead() }

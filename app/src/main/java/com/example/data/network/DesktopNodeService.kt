@@ -41,7 +41,8 @@ object GatewayEndpoints {
 }
 
 data class DesktopSyncPackage(val newNotifications: List<DesktopNotification>, val updatedTasks: List<DesktopTask>, val alertCoverage: AlertCoverage = AlertCoverage())
-data class GatewayReply(val reply: String, val sessionId: String, val requestId: String?, val provider: String?, val model: String?, val incomplete: Boolean)
+data class GatewayReply(val reply: String, val sessionId: String, val requestId: String?, val provider: String?, val model: String?, val incomplete: Boolean,
+    val userMessageId: String? = null, val assistantMessageId: String? = null)
 class GatewayException(val code: String, val httpStatus: Int = 0, message: String) : IOException(message)
 
 data class GatewayAuthorizationEpoch(val authentication: Long = 0, val workspace: Long = 0)
@@ -210,7 +211,12 @@ class DesktopNodeService(
         val reply = json.optString("reply")
         if (reply.isBlank() || json.optString("sessionId") != sessionId || json.optString("requestId") != requestId) throw GatewayException("PROTOCOL", message = "Desktop acknowledgment does not match this request.")
         val processing = json.optJSONObject("processing")
-        return GatewayReply(reply, sessionId, requestId, nullableString(processing, "provider"), nullableString(processing, "model"), json.optBoolean("incomplete"))
+        val userId = nullableString(json, "userMessageId")
+        val answerId = nullableString(json, "assistantMessageId")
+        if ((userId == null) != (answerId == null) || userId != null &&
+            (userId == answerId || !userId.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !answerId!!.matches(Regex("[A-Za-z0-9_-]{1,128}"))))
+            throw GatewayException("PROTOCOL", message = "Desktop receipt linkage is invalid.")
+        return GatewayReply(reply, sessionId, requestId, nullableString(processing, "provider"), nullableString(processing, "model"), json.optBoolean("incomplete"), userId, answerId)
     }
 
     suspend fun pullDesktopSync(config: DesktopNodeConfig, stats: NodeStats): DesktopSyncPackage {
