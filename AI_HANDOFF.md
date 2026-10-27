@@ -14,7 +14,11 @@ Removed confirmed unused Firebase AI/AppCheck, Coil, Retrofit/Moshi/codegen and
 HTTP logging dependencies plus unused Google Services/Secrets plugins. Kept OkHttp,
 Room/KSP, OS authentication, signer/application ID, encryption and all runtime gates.
 Main-run40271727364 debug APK baseline: 30,107,287 bytes (artifact12628329333).
-Candidate APK size and exact-head hosted acceptance remain pending.
+Candidate APK size and exact-head hosted acceptance remain pending. First run
+40444395214 compiled and passed Windows HTTPS interop, but JUnit rejected the new
+database-reopen test because its final deleteDatabase expression returned Boolean
+instead of Unit. The cleanup now asserts successful deletion and returns Unit;
+all behavior assertions are retained. This correction requires a new exact-head run.
 
 New tests cover send/sync, actual database close/reopen, minimum original privacy,
 independent receipt retention, deletion, same-text non-linkage, old desktops and

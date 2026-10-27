@@ -720,7 +720,7 @@ class GatewayRepositoryTest {
         catch (_: GatewayException) {}
         assertEquals(3, requests.size)
         database.close()
-        context.deleteDatabase(databaseName)
+        assertTrue(context.deleteDatabase(databaseName))
     }
 
     @Test fun oldDesktopWithoutMessageIdsRemainsCompatibleAndDoesNotMatchHistoryByText() = runBlocking {
